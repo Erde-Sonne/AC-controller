@@ -1,6 +1,7 @@
 package apps.smartfwd.src.main.java.org.chandler.task;
 
 import java.io.IOException;
+import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.nio.ByteBuffer;
 import java.nio.channels.SocketChannel;
@@ -24,8 +25,12 @@ public class SocketClientTask extends StoppableTask{
     public void run() {
         try {
             SocketChannel socketChannel = SocketChannel.open();
-            socketChannel.connect(new InetSocketAddress(this.ip,this.port));
+            //for docker test only
+            //todo delete this
+            InetAddress address = InetAddress.getByName(this.ip);
+            socketChannel.connect(new InetSocketAddress(address.getHostAddress(),this.port));
             ByteBuffer byteBuffer = ByteBuffer.allocate(512 * 1024);
+            byteBuffer.put(this.payload.getBytes());
             byteBuffer.flip();
             socketChannel.write(byteBuffer);
             while (byteBuffer.hasRemaining()) {

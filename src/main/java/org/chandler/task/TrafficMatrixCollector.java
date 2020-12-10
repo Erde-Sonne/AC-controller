@@ -2,12 +2,17 @@ package apps.smartfwd.src.main.java.org.chandler.task;
 
 import apps.smartfwd.src.main.java.org.chandler.TopologyDesc;
 import apps.smartfwd.src.main.java.org.chandler.constants.Env;
+import apps.smartfwd.src.main.java.org.chandler.constants.FlowEntryPriority;
 import apps.smartfwd.src.main.java.org.chandler.models.SwitchPair;
+import org.onosproject.net.Device;
 import org.onosproject.net.DeviceId;
+import org.onosproject.net.device.DeviceInterfaceDescription;
 import org.onosproject.net.flow.*;
 import org.onosproject.net.flow.criteria.Criterion;
 import org.onosproject.net.flow.criteria.IPCriterion;
 import org.onosproject.net.flow.criteria.VlanIdCriterion;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -24,40 +29,53 @@ public class TrafficMatrixCollector extends PeriodicalTask{
     List<Map<SwitchPair,Long>> preStats=new ArrayList<>();
     List<Map<SwitchPair,Long>> currStats=new ArrayList<>();
     FlowRuleService flowRuleService;
+    private final Logger logger= LoggerFactory.getLogger(getClass().getName());
     public TrafficMatrixCollector(FlowRuleService flowRuleService, TopologyDesc topo, Handler handler){
         this.desc=topo;
         this.handler=handler;
         this.flowRuleService=flowRuleService;
         //init
-        //todo duplicate
-        for(int i = 0; i< Env.N_FLOWS; i++){
-            currStats.set(i, new HashMap<>());
-            preStats.set(i,new HashMap<>());
+        for(int i = 0; i< Env.N_FLOWS+1; i++){
+            currStats.add(new HashMap<>());
+            preStats.add(new HashMap<>());
         }
 
         this.worker=()->{
             //init
-            List<Map<SwitchPair,Long>> res=new ArrayList<>(Env.N_FLOWS);
+            List<Map<SwitchPair,Long>> res=new ArrayList<>();
+            for(int i=0;i<Env.N_FLOWS+1;i++){
+                res.add(new HashMap<>());
+            }
             //reset
             currStats.forEach(stats-> stats.replaceAll((k, v) -> 0L));
 
             for(DeviceId srcId:topo.getDeviceIds()){
                 for(FlowEntry entry:flowRuleService.getFlowEntries(srcId)){
-                    if(!entry.table().equals(IndexTableId.of(1))) continue;
+                    if(!entry.table().equals(IndexTableId.of(1))&&!entry.table().equals(IndexTableId.of(2))) continue;
+                    if(entry.priority()!= FlowEntryPriority.TABLE1_MATRIX_COLLECTION&&entry.priority()!=FlowEntryPriority.TABLE2_DEFAULT_ROUTING) continue;
 
                     TrafficSelector selector=entry.selector();
-                    VlanIdCriterion vlanIdCriterion=(VlanIdCriterion)selector.getCriterion(Criterion.Type.VLAN_VID);
                     IPCriterion dstCriterion=(IPCriterion) selector.getCriterion(Criterion.Type.IPV4_DST);
+                    IPCriterion srcCriterion=(IPCriterion) selector.getCriterion(Criterion.Type.IPV4_SRC);
                     DeviceId dstId=topo.getConnectedDeviceFromIp(dstCriterion.ip());
-
-                    int vlanId=vlanIdCriterion.vlanId().toShort();
-                    Map<SwitchPair,Long> stats=currStats.get(vlanId);
+                    DeviceId sId=topo.getConnectedDeviceFromIp(srcCriterion.ip());
+                    if(!sId.equals(srcId)) continue;
                     SwitchPair key=SwitchPair.switchPair(srcId,dstId);
-                    stats.put(key,stats.getOrDefault(key,0L)+entry.bytes());
+
+                    if(entry.table().equals(IndexTableId.of(1))){
+                        VlanIdCriterion vlanIdCriterion=(VlanIdCriterion)selector.getCriterion(Criterion.Type.VLAN_VID);
+                        int vlanId=vlanIdCriterion.vlanId().toShort();
+                        Map<SwitchPair,Long> stats=currStats.get(vlanId);
+                        stats.put(key,stats.getOrDefault(key,0L)+entry.bytes());
+                    }else{
+                        Map<SwitchPair,Long> stats=currStats.get(Env.N_FLOWS);
+                        stats.put(key,stats.getOrDefault(key,0L)+entry.bytes());
+                    }
+
                 }
             }
             //diff and replace
-            for(int i = 0; i< Env.N_FLOWS; i++){
+            for(int i = 0; i< Env.N_FLOWS+1; i++){
                 Map<SwitchPair,Long> curr=currStats.get(i);
                 Map<SwitchPair,Long> pre=preStats.get(i);
                 Map<SwitchPair,Long> r=new HashMap<>();
@@ -66,7 +84,7 @@ public class TrafficMatrixCollector extends PeriodicalTask{
                     r.put(key,curr.get(key)-pre.getOrDefault(key,0L));
                     pre.put(key,curr.get(key));
                 }
-                res.add(i,r);
+                res.set(i,r);
             }
             handler.handle(res);
         };

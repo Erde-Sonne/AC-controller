@@ -126,14 +126,6 @@ public class TopologyDesc {
         if(null==instance){
             instance=new TopologyDesc(deviceService,hostService,topologyService);
         }
-//        logger.info(instance.switchIDToDeviceID.toString());
-//        logger.info(instance.deviceIDToSwitchID.toString());
-//        logger.info(instance.deviceIds.toString());
-//        logger.info(instance.deviceIds.toString());
-//        logger.info(instance.connectionPort.toString());
-//        logger.info(instance.connectedIPs.toString());
-//        logger.info(instance.ipConnectedDevices.toString());
-
         return instance;
     }
     public static TopologyDesc getInstance(){

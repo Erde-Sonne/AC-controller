@@ -26,11 +26,9 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.onlab.packet.*;
 import org.onlab.util.KryoNamespace;
-import org.onosproject.core.ApplicationId;
 import org.onosproject.core.CoreService;
 import org.onosproject.net.*;
 import org.onosproject.net.device.DeviceService;
-import org.onosproject.net.device.PortStatistics;
 import org.onosproject.net.edge.EdgePortService;
 import org.onosproject.net.flow.*;
 import org.onosproject.net.flowobjective.FlowObjectiveService;
@@ -72,16 +70,6 @@ public class AppComponent {
             .register(Integer.class)
             .register(DeviceId.class)
             .build("smartfwd");
-        private ApplicationId appId;
-    private HashMap<String, DeviceId> testSwMap = HandleConfigFile.getSwMap();
-    private HashMap<DeviceId, String> reverSwMap = HandleConfigFile.getReverswMap();
-    private HashMap<String, IpPrefix> testHostIpMap = HandleConfigFile.getHostIpMap();
-    private HashMap<String, MacAddress> testHostMacMap = HandleConfigFile.getHostMacMap();
-    private HashMap<String, DeviceId> testip2swMap = HandleConfigFile.getIp2swMap();
-    private int switchNum = HandleConfigFile.getSwithNum();
-    private HashMap<String, PortNumber> stringPortNumberHashMap = new HashMap<>();
-    private int flowTableCnt = 0;
-    private int timesCnt = 0;
 
     @Reference(cardinality = org.osgi.service.component.annotations.ReferenceCardinality.MANDATORY)
     protected CoreService coreService;
@@ -114,13 +102,68 @@ public class AppComponent {
 
     SocketServerTask.Handler classifierHandler= payload -> {
         //start new socket client and start;
-        SocketClientTask task=new SocketClientTask(payload, response -> {
+        logger.info("classifier payload {}",payload);
+        TopologyDesc topo=TopologyDesc.getInstance();
+        JsonNode specifierNode;
+        JsonNode statsNode;
+        try {
+            ObjectMapper mapper=new ObjectMapper();
+            JsonNode root=mapper.readTree(payload);
+            specifierNode=root.get("specifier");
+            statsNode=root.get("stats");
+        } catch (JsonProcessingException e) {
+            e.printStackTrace();
+            return;
+        }
+        ObjectMapper mapper=new ObjectMapper();
+        String newPayload;
+        try {
+            newPayload=mapper.writeValueAsString(statsNode);
+        } catch (JsonProcessingException e) {
+            e.printStackTrace();
+            return;
+        }
+        SocketClientTask task=new SocketClientTask(newPayload, response -> {
             //parse response and install flow entry
+            ObjectMapper m=new ObjectMapper();
+            try {
+                JsonNode resNode=m.readTree(response);
+                int vlanId=resNode.get("res").asInt();
+                int sport=specifierNode.get(0).asInt();
+                int dport=specifierNode.get(1).asInt();
+                String srcIp=specifierNode.get(2).asText();
+                IpPrefix sip=IpAddress.valueOf(srcIp).toIpPrefix();
+                String dstIp=specifierNode.get(3).asText();
+                IpPrefix dip=IpAddress.valueOf(dstIp).toIpPrefix();
 
+                String proto=specifierNode.get(4).asText();//TCP or UDP
+                FlowTableEntry entry=new FlowTableEntry();
+                DeviceId deviceId=topo.getConnectedDeviceFromIp(sip);
+                if(null==deviceId) return;
+                entry.setDeviceId(deviceId)
+                        .setPriority(FlowEntryPriority.TABLE0_TAG_FLOW)
+                        .setTable(0)
+                        .setTimeout(FlowEntryTimeout.TAG_FLOW);
+                entry.filter()
+                        .setVlanId(5)
+                        .setSrcIP(sip)
+                        .setDstIP(dip)
+                        .setDstPort(dport)
+                        .setSport(sport)
+                        .setProtocol((proto.equalsIgnoreCase("TCP")?IPv4.PROTOCOL_TCP: IPv4.PROTOCOL_UDP));
+                entry.action()
+                        .setVlanId(vlanId)
+                        .setTransition(1);
+
+                flowEntries.put(entry);
+            } catch (JsonProcessingException | InterruptedException e) {
+                e.printStackTrace();
+            }
         },App.ALG_CLASSIFIER_IP,App.ALG_CLASSIFIER_PORT);
         task.start();
     };
-    AtomicReference<List<Map<SwitchPair,Long>>>  collectedStats;
+    AtomicReference<List<Map<SwitchPair,Long>>>  collectedStats=new AtomicReference<>();
+    AtomicReference<Map<SwitchPair,Long>> portRate=new AtomicReference<>();
 
     TrafficMatrixCollector.Handler trafficMatrixCollectorHandler=new TrafficMatrixCollector.Handler() {
         @Override
@@ -129,59 +172,141 @@ public class AppComponent {
         }
     };
     TrafficMatrixCollector trafficMatrixCollector;
-
     PeriodicalSocketClientTask optRoutingRequestTask;
     PeriodicalSocketClientTask.ResponseHandler optRoutingRespHandler = resp -> {
+        TopologyDesc topo=TopologyDesc.getInstance();
+        ObjectMapper mapper=new ObjectMapper();
+        try {
+            JsonNode root=mapper.readTree(resp);
+            for(int i=0;i<Env.N_FLOWS;i++){
+                JsonNode node=root.get(String.valueOf(i));
+                for(int k=0;k<node.size();k++){
+                    JsonNode routing=node.get(k);
+                    int start=routing.get(0).asInt();
+                    int end=routing.get(routing.size()-1).asInt();
+                    for(IpPrefix srcAddr:topo.getConnectedIps(topo.getDeviceId(start))){
+                        for(IpPrefix dstAddr:topo.getConnectedIps(topo.getDeviceId(end))){
+                            for(int j=0;j<routing.size()-1;j++){
+                                int curr=routing.get(j).asInt();
+                                int next=routing.get(j+1).asInt();
+                                DeviceId currDeviceId=topo.getDeviceId(curr);
+                                DeviceId nextHopDeviceId=topo.getDeviceId(next);
+                                PortNumber output=topo.getConnectionPort(currDeviceId,nextHopDeviceId);
+                                if(output.equals(INVALID_PORT)){
+                                    continue;
+                                    //todo log
+                                }
+                                FlowTableEntry entry=new FlowTableEntry();
+                                entry.setDeviceId(currDeviceId)
+                                        .setPriority(FlowEntryPriority.TABLE2_OPT_ROUTING)
+                                        .setTable(2);
+                                entry.filter()
+                                        .setSrcIP(srcAddr)
+                                        .setDstIP(dstAddr)
+                                        .setVlanId(i);
+                                entry.action()
+                                        .setOutput(output);
+                                flowEntries.put(entry);
+                            }
+                        }
+                    }
 
+                }
+            }
+        } catch (JsonProcessingException e) {
+            e.printStackTrace();
+        }
+        catch (InterruptedException e) {
+            logger.info("Interrupted producer");
+            e.printStackTrace();
+        }
     };
     PeriodicalSocketClientTask.RequestGenerator optRoutingReqGenerator=new PeriodicalSocketClientTask.RequestGenerator() {
         @Override
         public String payload() {
-            List<Map<SwitchPair,Long>> stats=collectedStats.get();
-            if(null==stats){
+            List<Map<SwitchPair,Long>> traffic=collectedStats.get();
+            if(null==traffic){
                 return null;
             }
+            TopologyDesc topo=TopologyDesc.getInstance();
+            Map<String,ArrayList<Long>> content=new HashMap<>();
+            for(int f=0;f<Env.N_FLOWS;f++){
+                content.put(String.valueOf(f),new ArrayList<>());
+                ArrayList<Long> stats=content.get(String.valueOf(f));
+                for(int i=0;i<Env.N_SWITCH;i++){
+                    for(int j=0;j<Env.N_SWITCH;j++){
+                        if(i==j) continue;
+                        stats.add(traffic.get(f).get(SwitchPair.switchPair(topo.getDeviceId(i),topo.getDeviceId(j))));
+                    }
+                }
+            }
+            ObjectMapper mapper=new ObjectMapper();
+            String payload=null;
+            try {
+                    payload= mapper.writeValueAsString(content);
+            } catch (JsonProcessingException e) {
+                logger.info(e.getOriginalMessage());
+                    e.printStackTrace();
+            }
+            return payload+"*";
+        }
+    };
 
-            return null;
+    PortStatsCollectTask portRateCollector;
+    PortStatsCollectTask.Consumer portRateConsumer=new PortStatsCollectTask.Consumer() {
+        @Override
+        public void consume(Map<SwitchPair, Long> stats) {
+            portRate.set(stats);
         }
     };
 
     @Activate
     protected void activate() {
         logger.info("Activate started-------------");
-        appId = coreService.registerApplication("org.chandler.smartfwd");
+        App.appId = coreService.registerApplication("org.chandler.smartfwd");
         Env.N_SWITCH=deviceService.getAvailableDeviceCount();
 
         logger.info("Populate cache");
         TopologyDesc.getInstance(deviceService,hostService,topologyService);
         logger.info("Populate done");
-//        init();
-//        //start flow entry install worker
-//        flowEntryTask=new FlowEntryTask(flowEntries,flowRuleService);
-//        flowEntryTask.start();
+        logger.info("Init static flow table");
+        init();
+        //start flow entry install worker
+        logger.info("Start Flow entry installation worker");
+        flowEntryTask=new FlowEntryTask(flowEntries,flowRuleService);
+        flowEntryTask.start();
+        logger.info("Flow entry installation worker started");
 //        //start flow classifier server;
-//        classifierServer=new SocketServerTask(App.CLASSIFIER_LISTENING_PORT,classifierHandler);
-//        classifierServer.start();
+        logger.info("Start socket server for flow classifier");
+        classifierServer=new SocketServerTask(App.CLASSIFIER_LISTENING_PORT,classifierHandler);
+        classifierServer.start();
+        logger.info("Socket server for flow classifier started");
 //
 //        //start traffic collector
-//        trafficMatrixCollector=new TrafficMatrixCollector(flowRuleService,TopologyDesc.getInstance(),trafficMatrixCollectorHandler);
-//        trafficMatrixCollector.start();
+        logger.info("Start traffic matrix collector");
+        trafficMatrixCollector=new TrafficMatrixCollector(flowRuleService,TopologyDesc.getInstance(),trafficMatrixCollectorHandler);
+        trafficMatrixCollector.start();
+        logger.info("Traffic matrix collector started");
+
+        logger.info("Start Port Rate Collector");
+        portRateCollector=new PortStatsCollectTask(portStatisticsService,topologyService,portRateConsumer);
+        portRateCollector.start();
+        logger.info("Port Rate collector start");
 //        //start opt routing request;
-//        optRoutingRequestTask=new PeriodicalSocketClientTask(App.OPT_ROUTING_IP,App.OPT_ROUTING_PORT,optRoutingReqGenerator, optRoutingRespHandler);
-//        optRoutingRequestTask.start();
-
-
-
-
-//        init();
-
-
+        optRoutingRequestTask=new PeriodicalSocketClientTask(App.OPT_ROUTING_IP,App.OPT_ROUTING_PORT,optRoutingReqGenerator, optRoutingRespHandler);
+        optRoutingRequestTask.start();
     }
 
     @Deactivate
     protected void deactivate() {
+        App.getInstance().getPool().shutdownNow();
+        App.getInstance().getPool().shutdownNow();
+        App.getInstance().getScheduledPool().shutdownNow();
+        flowEntryTask.stop();
+        classifierServer.stop();
+        trafficMatrixCollector.stop();
+        optRoutingRequestTask.stop();
         flowRuleService.removeFlowRulesById(App.appId);
-
         logger.info("--------------------System Stopped-------------------------");
     }
 
@@ -194,20 +319,23 @@ public class AppComponent {
 
         //在table0 安装与host直连switch的默认路由
         installFlowEntryToEndSwitch();
-        //在table0 安装已经打标签的流的流表
+        logger.info("Flow entry for end host installed");
+//        //在table0 安装已经打标签的流的流表
         installFlowEntryForLabelledTraffic();
-        //在table0 安装默认流表
+        logger.info("Flow entry for labelled traffic installed");
+//        //在table0 安装默认流表
         installDefaultFlowEntryToTable0();
-        //安装table1 用于统计流量矩阵
+        logger.info("Flow entry for default traffic installed");
+//        //安装table1 用于统计流量矩阵
         installFlowEntryForMatrixCollection();
-
-        //安装IP到table2的流表项
-//        installIP2Table2();
+        logger.info("Flow entry for traffic matrix collection installed");
+//
+//        //安装IP到table2的流表项
         installDefaultRoutingToTable2();
         installDropActionToTable2();
+        logger.info("Flow entry for drop packet installed");
 
-        //每隔5s上传一次流量矩阵
-//        storeMatrixMission();
+
         //每隔1s统计一次接入端口流数据
 //        storeFlowRateMission();
 //        getMatrixMission();
@@ -272,6 +400,7 @@ public class AppComponent {
         TopologyDesc topo=TopologyDesc.getInstance();
         String req="default*";
         SocketClientTask.ResponseHandler responseHandler = payload -> {
+            logger.info(payload);
             try{
                 ObjectMapper mapper=new ObjectMapper();
                 JsonNode root=mapper.readTree(payload);
@@ -330,60 +459,6 @@ public class AppComponent {
         }
     }
 
-
-    void installSingleOptRoutingToTable2(List<Integer> routing,int vlanId){
-        //[1,2,3,4]
-        TopologyDesc desc=TopologyDesc.getInstance();
-        DeviceId start=desc.getDeviceId(routing.get(0));
-        DeviceId end=desc.getDeviceId(routing.get(routing.size()-1));
-
-        for(Host srcHost:hostService.getConnectedHosts(start)){
-            for(Host dstHost:hostService.getConnectedHosts(end)){
-                for(IpAddress srcAddr:srcHost.ipAddresses()){
-                    for(IpAddress dstAddr:dstHost.ipAddresses()){
-                        for(int i=0;i<routing.size()-1;i++){
-                            DeviceId curr=desc.getDeviceId(routing.get(i));
-                            DeviceId nextHop=desc.getDeviceId(routing.get(i+1));
-                            FlowTableEntry entry=new FlowTableEntry();
-                            PortNumber output=desc.getConnectionPort(curr,nextHop);
-                            if(output.equals(INVALID_PORT)){
-                                //todo log
-                                continue;
-                            }
-                            //check output
-                            entry.setTable(2)
-                                    .setPriority(FlowEntryPriority.TABLE2_OPT_ROUTING)
-                                    .setDeviceId(curr)
-                                    .setTimeout(FlowEntryTimeout.OPT_ROUTING);
-                            entry.filter()
-                                    .setVlanId(vlanId)
-                                    .setSrcIP(srcAddr.toIpPrefix())
-                                    .setDstIP(dstAddr.toIpPrefix());
-                            entry.action()
-                                    .setOutput(output);
-                            try{
-                                flowEntries.put(entry);
-                            }catch (InterruptedException e){
-                                //todo log
-                                e.printStackTrace();
-                            }
-                        }
-                    }
-                }
-            }
-
-        }
-
-    }
-    void installOptRoutingToTable2(ArrayList<ArrayList<Integer>> routings,int vlanId){
-        //[1,2,3,4]
-        for(List<Integer> routing:routings){
-            installSingleOptRoutingToTable2(routing,vlanId);
-        }
-        //todo log
-    }
-
-
     private void installFlowEntryForMatrixCollection() {
         for(Host srcHost:TopologyDesc.getInstance().getHosts()){
             DeviceId switchID=srcHost.location().deviceId();
@@ -391,11 +466,11 @@ public class AppComponent {
                 if(!srcHost.equals(dstHost)){
                     for(IpAddress srcIp:srcHost.ipAddresses()){
                         for(IpAddress dstIp:dstHost.ipAddresses()){
-                            for(int vlanId=0;vlanId<4;vlanId++){
+                            for(int vlanId=0;vlanId<Env.N_FLOWS;vlanId++){
                                 FlowTableEntry entry=new FlowTableEntry();
                                 entry.setDeviceId(switchID)
                                         .setTable(1)
-                                        .setPriority(60000);
+                                        .setPriority(FlowEntryPriority.TABLE1_MATRIX_COLLECTION);
                                 entry.filter()
                                         .setSrcIP(srcIp.toIpPrefix())
                                         .setDstIP(dstIp.toIpPrefix())
@@ -456,21 +531,21 @@ public class AppComponent {
 
 
 
-    public String getFlowRate() {
-      /*  Set<String> keySet = testSwMap.keySet();
-        JsonObject matrixRes = new JsonObject();
-        for(String key : keySet) {
-            DeviceId deviceId = testSwMap.get(key);
-            PortStatistics deltaStatisticsForPort = deviceService.getDeltaStatisticsForPort(deviceId, PortNumber.portNumber("1"));
-            long l = deltaStatisticsForPort.bytesReceived();
-            matrixRes.set(key, l);
-        }
-        return matrixRes.toString();*/
-        DeviceId deviceId = testSwMap.get("0");
-        PortStatistics deltaStatisticsForPort = deviceService.getDeltaStatisticsForPort(deviceId, PortNumber.portNumber("1"));
-        long l = deltaStatisticsForPort.bytesReceived();
-        return String.valueOf(l);
-    }
+//    public String getFlowRate() {
+//      /*  Set<String> keySet = testSwMap.keySet();
+//        JsonObject matrixRes = new JsonObject();
+//        for(String key : keySet) {
+//            DeviceId deviceId = testSwMap.get(key);
+//            PortStatistics deltaStatisticsForPort = deviceService.getDeltaStatisticsForPort(deviceId, PortNumber.portNumber("1"));
+//            long l = deltaStatisticsForPort.bytesReceived();
+//            matrixRes.set(key, l);
+//        }
+//        return matrixRes.toString();*/
+////        DeviceId deviceId = testSwMap.get("0");
+////        PortStatistics deltaStatisticsForPort = deviceService.getDeltaStatisticsForPort(deviceId, PortNumber.portNumber("1"));
+////        long l = deltaStatisticsForPort.bytesReceived();
+////        return String.valueOf(l);
+//    }
 
 
     private String getMaxEdgeRate() {
@@ -495,170 +570,36 @@ public class AppComponent {
         }
     }
 
-    /**
-     * 获取当前topo中链路速率前3的链路.
-     * @return
-     */
-    private String getTop3EdgeRate() {
-        try {
-            Topology topology = topologyService.currentTopology();
-            TopologyGraph graph = topologyService.getGraph(topology);
-            Set<TopologyEdge> edges = graph.getEdges();
-            ArrayList<Long> longs = new ArrayList<>();
-            HashMap<Long, TopologyEdge> hashMap = new HashMap<>();
-            for (TopologyEdge edge : edges) {
-                ConnectPoint src = edge.link().src();
-                long rate = portStatisticsService.load(src).rate();
-                longs.add(rate);
-                hashMap.put(rate, edge);
-            }
-            Collections.sort(longs);
-            int size = longs.size();
-            Long long1 = longs.get(size - 1);
-            Long long2 = longs.get(size - 2);
-            Long long3 = longs.get(size - 3);
-            edgeArrayList.add(hashMap.get(long1));
-            edgeArrayList.add(hashMap.get(long2));
-            edgeArrayList.add(hashMap.get(long3));
-            Double out1 = Double.parseDouble(String.valueOf(long1 * 8 / 10000)) * 0.01;
-            Double out2 = Double.parseDouble(String.valueOf(long2 * 8 / 10000)) * 0.01;
-            Double out3 = Double.parseDouble(String.valueOf(long3 * 8 / 10000)) * 0.01;
-            return "rate1:" + out1.toString() + "  rate2:" +
-                    out2.toString() + "  rate3:" + out3.toString() + "***";
-        } catch (Exception e) {
-            logger.info(e.toString());
-            return "-------->>>>>>>" + e.toString();
-        }
-    }
 
-    /**
-     * 通过edge获取当前链路所连接的端口速率.
-     * @param edge
-     * @return
-     */
-    private String getRateByEdge(TopologyEdge edge){
-        try {
-            ConnectPoint src = edge.link().src();
-            ConnectPoint dst = edge.link().dst();
-            long srcRate = portStatisticsService.load(src).rate();
-            long dstRate = portStatisticsService.load(dst).rate();
-            Double srcOut = Double.parseDouble(String.valueOf(srcRate * 8 / 10000)) * 0.01;
-            Double dstOut = Double.parseDouble(String.valueOf(dstRate * 8 / 10000)) * 0.01;
 
-            return "srcRate:" + srcOut.toString() +
-                    "   dstRate:" + dstOut.toString() + "*************";
-        } catch (Exception e) {
-            logger.info(e.toString());
-            return "-------->>>>>>>" + e.toString();
-        }
-    }
 
-    /**
-     * 获取链路的速率.
-     */
-    private String getEdgeSpeed() {
-        logger.info("??????????????????????????");
-        try {
-            Topology topology = topologyService.currentTopology();
-            TopologyGraph graph = topologyService.getGraph(topology);
-            Set<TopologyEdge> edges = graph.getEdges();
-//        JsonObject jsonObject = new JsonObject();
-            ArrayList<Double> doubles = new ArrayList<>();
-            for (TopologyEdge edge : edges) {
-                ConnectPoint src = edge.link().src();
-//                ConnectPoint dst = edge.link().dst();
-//                String srcId = reverSwMap.get(src.deviceId());
-//                String dstId = reverSwMap.get(dst.deviceId());
-                long rate = portStatisticsService.load(src).rate();
-//                String key = srcId + "->" + dstId;
-//            jsonObject.set(key, rate/1000000);
-                Double out = Double.parseDouble(String.valueOf(rate * 8 / 10000)) * 0.01;
-                doubles.add(out);
-            }
-            int size = doubles.size();
-            Double sum = 0d;
-            for (Double aDouble : doubles) {
-                sum += aDouble;
-            }
-            Double avgSpeed = sum / size;
-            Collections.sort(doubles);
-            Double minSpeed = doubles.get(0);
-            Double maxSpeed = doubles.get(size - 1);
 
-//            List<Double> doubles1 = doubles.subList(doubles.size() - 61, doubles.size() - 1);
-//            longs.clear();
-//            return doubles1.toString();
-            return doubles.toString() + "\n" +
-                    "   average:" + avgSpeed +
-                    "    min:" + minSpeed +
-                    "    max:" + maxSpeed + "*************";
-        } catch (Exception e) {
-            logger.info(e.toString());
-            return "-------->>>>>>>" + e.toString();
-        }
-    }
-
-    /**
-     * 定时显示链路速度.
-     */
-//    private void showEdgeSpeed(int interval) {
-//        timer.schedule(new TimerTask() {
-//            @Override
-//            public void run() {
-//                String edgeSpeed = getEdgeSpeed();
-//                logger.info("==============================================");
-//                logger.info(edgeSpeed);
-//            }
-//        }, 1000 * interval, 1000 * interval);
-//    }
 
     /**
      * 获取两个优化路由时间段内经过默认路由的数据量.
      */
-    private HashMap<String, ArrayList<Long>> getDefaultStatics() {
-        Set<String> keySet = testSwMap.keySet();
-        HashMap<String, ArrayList<Long>> hashMap = new HashMap<>();
-        for (String key : keySet) {
-            ArrayList<Long> longArrayList = new ArrayList<>();
-            DeviceId deviceId = testSwMap.get(key);
-            Iterable<FlowEntry> flowEntries = flowRuleService.getFlowEntries(deviceId);
-            Iterator<FlowEntry> iterator = flowEntries.iterator();
-            while (iterator.hasNext()) {
-                FlowEntry flowEntry = iterator.next();
-                if (flowEntry.tableId() == 0 && flowEntry.priority() == 50000) {
-                    long bytes = flowEntry.bytes();
-                    long packets = flowEntry.packets();
-                    longArrayList.add(bytes);
-                    longArrayList.add(packets);
-                }
-            }
-            hashMap.put(key, longArrayList);
-        }
-        return hashMap;
-    }
-
-//    /**
-//     * 将新得到的json数据与原json数据作差值，得到数据的增量.
-//     * @return
-//     */
-//    private String subObjStatics(HashMap<String, ArrayList<Long>> map, HashMap<String, ArrayList<Long>> oldMap) {
-//        Set<String> keySet = map.keySet();
-//        JsonObject jsonObject = new JsonObject();
+//    private HashMap<String, ArrayList<Long>> getDefaultStatics() {
+//        Set<String> keySet = testSwMap.keySet();
+//        HashMap<String, ArrayList<Long>> hashMap = new HashMap<>();
 //        for (String key : keySet) {
-//            JsonArray jsonArray = new JsonArray();
-//            ArrayList<Long> longs = map.get(key);
-//            ArrayList<Long> oldLongs = oldMap.get(key);
-//            long bytes = longs.get(0) - oldLongs.get(0);
-//            long packets = longs.get(1) - oldLongs.get(1);
-//            jsonArray.add(bytes);
-//            jsonArray.add(packets);
-//            jsonObject.set(key, jsonArray);
+//            ArrayList<Long> longArrayList = new ArrayList<>();
+//            DeviceId deviceId = testSwMap.get(key);
+//            Iterable<FlowEntry> flowEntries = flowRuleService.getFlowEntries(deviceId);
+//            Iterator<FlowEntry> iterator = flowEntries.iterator();
+//            while (iterator.hasNext()) {
+//                FlowEntry flowEntry = iterator.next();
+//                if (flowEntry.tableId() == 0 && flowEntry.priority() == 50000) {
+//                    long bytes = flowEntry.bytes();
+//                    long packets = flowEntry.packets();
+//                    longArrayList.add(bytes);
+//                    longArrayList.add(packets);
+//                }
+//            }
+//            hashMap.put(key, longArrayList);
 //        }
-//        //更新oldStatics
-////        oldStatics.clear();
-//        oldStatics.putAll(map);
-//        return jsonObject.toString();
+//        return hashMap;
 //    }
+
 
     /**
      * 上传流量矩阵线程，并且获取返回的优化路由信息.
@@ -700,185 +641,5 @@ public class AppComponent {
             }
         }
     }
-
-//    /**
-//     * 通过获取优化路由信息下发流表项.
-//     */
-//    public  class RoutingFlowThread implements Runnable {
-//        @Override
-//        public void run() {
-//            // 线程会一直运行,除非被中断掉.
-//            while (!Thread.currentThread().isInterrupted()) {
-//                while (!flowEntries.isEmpty()) {
-//                    logger.info("-----------install routing flow entries---------------");
-////                    String routingInfo = flowEntries.poll();
-////                    throughStrInstallFlow(routingInfo);
-//                    logger.info("-------------------optimizing routing flow installed---------------------------");
-//                    try {
-//                        Thread.sleep(6000);
-//                    } catch (InterruptedException e) {
-//                        e.printStackTrace();
-//                    }
-//                    if (edgeArrayList.size() != 0) {
-//                        for (TopologyEdge edge : edgeArrayList) {
-//                            String rateByEdge = getRateByEdge(edge);
-//                            writeToFile(rateByEdge, "/home/top3rate.txt");
-//                        }
-//                    }
-//                    writeToFile("\n\n", "/home/top3rate.txt");
-//                    edgeArrayList.clear();
-//                    String maxEdgeRate = getMaxEdgeRate();
-//                    writeToFile(maxEdgeRate, "/home/something.txt");
-//                    writeToFile("\n\n", "/home/something.txt");
-////            String edgeSpeed = getEdgeSpeed();
-////            writeToFile(edgeSpeed, "/home/something.txt");
-////            log.info(edgeSpeed);
-//           /* HashMap<String, ArrayList<Long>> statics = getDefaultStatics();
-//            String staticsOut = subObjStatics(statics, oldStatics);
-//            log.info(staticsOut);*/
-//                }
-//            }
-//        }
-//    }
-
-
-
-
-
-//    /**
-//     * 链路断掉处理的线程.
-//     */
-//    public class ConnectionDownThread implements Runnable {
-//        @Override
-//        public void run() {
-//            try {
-//                logger.info("--------------connection down and request--------------");
-//                SocketChannel socketChannel = SocketChannel.open();
-//                socketChannel.connect(new InetSocketAddress("192.168.1.196", 1028));
-//                ByteBuffer byteBuffer = ByteBuffer.allocate(2048);
-//                //发送断掉的链路以及topo信息
-//                JsonObject sendInfo = new JsonObject();
-//                JsonArray jsonArray = new JsonArray();
-//                jsonArray.add(0);
-//                jsonArray.add(1);
-//                jsonArray.add(1);
-//                jsonArray.add(0);
-//                sendInfo.set("disconnectEdge", jsonArray);
-//                try {
-//                    JsonNode jsonNode = new ObjectMapper().readTree(topoIdx.substring(0, topoIdx.length() - 1));
-//                    JsonNode topoid = jsonNode.get("topo_idx");
-//                    sendInfo.set("topo_idx", topoid.intValue());
-//                } catch (JsonProcessingException e) {
-//                    e.printStackTrace();
-//                }
-//                String s = sendInfo.toString() + "*";
-//                byteBuffer.put(s.getBytes());
-//                byteBuffer.flip();
-//                socketChannel.write(byteBuffer);
-//                while (byteBuffer.hasRemaining()) {
-//                    socketChannel.write(byteBuffer);
-//                }
-//                byteBuffer.clear();
-//
-//                //接收数据
-//                int len = 0;
-//                StringBuilder stringBuilder = new StringBuilder();
-//                while ((len = socketChannel.read(byteBuffer)) >= 0)  {
-//                    byteBuffer.flip();
-//                    String res = new String(byteBuffer.array(), 0, len);
-//                    byteBuffer.clear();
-//                    stringBuilder.append(res);
-//                }
-////                flowEntries.offer(stringBuilder.toString());
-//                socketChannel.close();
-//
-//            } catch (IOException e) {
-//                e.printStackTrace();
-//            }
-//
-//        }
-//    }
-//    /**
-//     * 接收topo的id信息.
-//     */
-//    public class TopoIdxThread implements Runnable {
-//        @Override
-//        public void run() {
-//            ServerSocketChannel serverSocketChannel = null;
-//            Selector selector = null;
-//            ByteBuffer buffer = ByteBuffer.allocate(1024);
-//            logger.info("-------topoidxthread   running----------");
-//            try {
-//                serverSocketChannel = ServerSocketChannel.open();
-//                serverSocketChannel.bind(new InetSocketAddress("0.0.0.0", 1029));
-//                serverSocketChannel.configureBlocking(false);
-//                selector = Selector.open();
-//                serverSocketChannel.register(selector, SelectionKey.OP_ACCEPT);
-//                while (selector.select() > 0) {
-//                    Iterator<SelectionKey> iterator = selector.selectedKeys().iterator();
-//                    while (iterator.hasNext()) {
-//                        SelectionKey next = iterator.next();
-//                        iterator.remove();
-//                        if (next.isAcceptable()) {
-//                            SocketChannel accept = serverSocketChannel.accept();
-//                            accept.configureBlocking(false);
-//                            accept.register(selector, SelectionKey.OP_READ);
-//                        } else if (next.isReadable()) {
-//                            SocketChannel channel = (SocketChannel) next.channel();
-//                            int len = 0;
-//                            StringBuilder stringBuilder = new StringBuilder();
-//                            while ((len = channel.read(buffer)) >= 0) {
-//                                buffer.flip();
-//                                String res = new String(buffer.array(), 0, len);
-//                                buffer.clear();
-//                                stringBuilder.append(res);
-//                            }
-//                            //清空优化路由
-////                        emptyOptiFlow();
-//                            // 接收topo信息
-//                            topoIdx = stringBuilder.toString() + "*";
-//                            logger.info("=========" + topoIdx + "==========");
-//                            //发送请求默认路由信息，但不对接收数据进行处理
-//                            sendDefaultReqMessage();
-//                            // topo变化35s后请求默认路由
-//                            DefaultRouterMission(45);
-//                            // 等待topo发现完全
-//                            waitTopoDiscover();
-//                            //重新设置switch间的端口信息
-////                            setPortInfo();
-//                     /*   try {
-//                            Thread.sleep(10000);
-//                        } catch (InterruptedException e) {
-//                            e.printStackTrace();
-//                        }*/
-////                        DisConnectionMission(65);
-//                            //请求优化路由
-//                            optiRouterMission(15, 60, 0);
-//                            channel.close();
-//                        }
-//                    }
-//
-//                }
-//            } catch (IOException e) {
-//                e.printStackTrace();
-//            } finally {
-//                // 释放相关的资源
-//                if (selector != null) {
-//                    try {
-//                        selector.close();
-//                    } catch (IOException e) {
-//                        e.printStackTrace();
-//                    }
-//                }
-//                if (serverSocketChannel != null) {
-//                    try {
-//                        serverSocketChannel.close();
-//                    } catch (IOException e) {
-//                        e.printStackTrace();
-//                    }
-//                }
-//            }
-//        }
-//    }
 }
 

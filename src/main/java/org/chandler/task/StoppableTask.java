@@ -4,7 +4,7 @@ import java.util.concurrent.Future;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public  abstract class StoppableTask extends Task {
-    AtomicBoolean isRunning;
+    AtomicBoolean isRunning=new AtomicBoolean();
     boolean stopRequested=false;
     Future<?> handle;
 
@@ -20,7 +20,9 @@ public  abstract class StoppableTask extends Task {
         if(null==service){
             worker.interrupt();
         }else{
-            handle.cancel(true);
+            if(null!=handle){
+                handle.cancel(true);
+            }
         }
     }
     public boolean isRunning(){

@@ -27,9 +27,9 @@ public class App {
     public static final int OPT_ROUTING_PORT=1038;
 
     public static final String LISTENING_IP="0.0.0.0";
-    public static final int CLASSIFIER_LISTENING_PORT=1039;
+    public static final int CLASSIFIER_LISTENING_PORT=1029;
 
     public static final String ALG_CLASSIFIER_IP="host.docker.internal";
-    public static final int ALG_CLASSIFIER_PORT=0;
+    public static final int ALG_CLASSIFIER_PORT=1040;
 }
 

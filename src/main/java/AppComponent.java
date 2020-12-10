@@ -24,6 +24,7 @@ import apps.smartfwd.src.main.java.task.*;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import org.onlab.packet.*;
 import org.onlab.util.KryoNamespace;
 import org.onosproject.core.CoreService;
@@ -118,13 +119,16 @@ public class AppComponent {
         ObjectMapper mapper=new ObjectMapper();
         String newPayload;
         try {
-            newPayload=mapper.writeValueAsString(statsNode);
+            ObjectNode node=mapper.createObjectNode();
+            node.put("stats",statsNode);
+            newPayload=mapper.writeValueAsString(node)+"*";
         } catch (JsonProcessingException e) {
             e.printStackTrace();
             return;
         }
         SocketClientTask task=new SocketClientTask(newPayload, response -> {
             //parse response and install flow entry
+            logger.info("classifier response {}",response);
             ObjectMapper m=new ObjectMapper();
             try {
                 JsonNode resNode=m.readTree(response);
@@ -567,78 +571,6 @@ public class AppComponent {
         } catch (Exception e) {
             logger.info(e.toString());
             return "-------->>>>>>>" + e.toString();
-        }
-    }
-
-
-
-
-
-
-    /**
-     * 获取两个优化路由时间段内经过默认路由的数据量.
-     */
-//    private HashMap<String, ArrayList<Long>> getDefaultStatics() {
-//        Set<String> keySet = testSwMap.keySet();
-//        HashMap<String, ArrayList<Long>> hashMap = new HashMap<>();
-//        for (String key : keySet) {
-//            ArrayList<Long> longArrayList = new ArrayList<>();
-//            DeviceId deviceId = testSwMap.get(key);
-//            Iterable<FlowEntry> flowEntries = flowRuleService.getFlowEntries(deviceId);
-//            Iterator<FlowEntry> iterator = flowEntries.iterator();
-//            while (iterator.hasNext()) {
-//                FlowEntry flowEntry = iterator.next();
-//                if (flowEntry.tableId() == 0 && flowEntry.priority() == 50000) {
-//                    long bytes = flowEntry.bytes();
-//                    long packets = flowEntry.packets();
-//                    longArrayList.add(bytes);
-//                    longArrayList.add(packets);
-//                }
-//            }
-//            hashMap.put(key, longArrayList);
-//        }
-//        return hashMap;
-//    }
-
-
-    /**
-     * 上传流量矩阵线程，并且获取返回的优化路由信息.
-     */
-    public class FlowMarixThread implements Runnable {
-        private String matrixMap;
-        public FlowMarixThread(String matrixMap) {
-            this.matrixMap = matrixMap;
-        }
-        @Override
-        public void run() {
-            try {
-                SocketChannel socketChannel = SocketChannel.open();
-                socketChannel.connect(new InetSocketAddress("192.168.1.132", 1030));
-//            socketChannel.connect(new InetSocketAddress("172.16.181.1", 1027));
-                ByteBuffer byteBuffer = ByteBuffer.allocate(512 * 1024);
-                byteBuffer.put(matrixMap.getBytes());
-                byteBuffer.flip();
-                socketChannel.write(byteBuffer);
-                while (byteBuffer.hasRemaining()) {
-                    socketChannel.write(byteBuffer);
-                }
-                byteBuffer.clear();
-                //接收数据
-                int len = 0;
-                StringBuilder stringBuilder = new StringBuilder();
-                while ((len = socketChannel.read(byteBuffer)) >= 0) {
-                    byteBuffer.flip();
-                    String res = new String(byteBuffer.array(), 0, len);
-                    byteBuffer.clear();
-                    stringBuilder.append(res);
-                }
-                String out = stringBuilder.toString();
-                logger.info(out);
-//                flowEntries.offer(out);
-                socketChannel.close();
-            } catch (IOException e) {
-                e.printStackTrace();
-            }
         }
     }
 }

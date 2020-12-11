@@ -2,6 +2,8 @@ package apps.smartfwd.src.main.java.task;
 
 
 
+import apps.smartfwd.src.main.java.task.base.AbstractStoppableTask;
+
 import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.nio.ByteBuffer;
@@ -11,7 +13,7 @@ import java.nio.channels.ServerSocketChannel;
 import java.nio.channels.SocketChannel;
 import java.util.Iterator;
 
-public class SocketServerTask extends StoppableTask {
+public class SocketServerTask extends AbstractStoppableTask {
     public interface Handler{
         void handle(String payload);
     }

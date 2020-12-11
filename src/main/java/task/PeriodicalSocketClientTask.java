@@ -1,6 +1,8 @@
 package apps.smartfwd.src.main.java.task;
 
 
+import apps.smartfwd.src.main.java.task.base.PeriodicalTask;
+
 import java.io.IOException;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;

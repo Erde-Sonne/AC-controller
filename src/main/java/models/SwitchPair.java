@@ -38,7 +38,7 @@ public class SwitchPair{
         }
         return cache.get(key);
     }
-    public static SwitchPair switchPair(int s,int d){
-        return switchPair(desc.getDeviceId(s),desc.getDeviceId(d));
-    }
+//    public static SwitchPair switchPair(int s,int d){
+//        return switchPair(desc.getDeviceId(s),desc.getDeviceId(d));
+//    }
 }

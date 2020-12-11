@@ -1,6 +1,7 @@
 package apps.smartfwd.src.main.java.task;
 
 import apps.smartfwd.src.main.java.models.SwitchPair;
+import apps.smartfwd.src.main.java.task.base.PeriodicalTask;
 import org.onosproject.net.ConnectPoint;
 import org.onosproject.net.statistic.PortStatisticsService;
 import org.onosproject.net.topology.Topology;

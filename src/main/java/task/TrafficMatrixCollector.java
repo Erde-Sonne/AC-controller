@@ -4,6 +4,7 @@ import apps.smartfwd.src.main.java.TopologyDesc;
 import apps.smartfwd.src.main.java.constants.FlowEntryPriority;
 import apps.smartfwd.src.main.java.models.SwitchPair;
 import apps.smartfwd.src.main.java.constants.Env;
+import apps.smartfwd.src.main.java.task.base.PeriodicalTask;
 import org.onosproject.net.DeviceId;
 import org.onosproject.net.flow.*;
 import org.onosproject.net.flow.criteria.Criterion;
@@ -17,7 +18,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
-public class TrafficMatrixCollector extends PeriodicalTask{
+public class TrafficMatrixCollector extends PeriodicalTask {
     public interface Handler{
         void handle(List<Map<SwitchPair,Long>> stats);
     }

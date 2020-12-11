@@ -95,14 +95,13 @@ public class AppComponent {
 
     BlockingQueue<FlowTableEntry> flowEntries=new LinkedBlockingQueue<>();
 
-    private ArrayList<TopologyEdge> edgeArrayList = new ArrayList<>();
 
 
     FlowEntryTask flowEntryTask;
     SocketServerTask classifierServer;
 
     SocketServerTask.Handler classifierHandler= payload -> {
-        //start new socket client and start;
+        //start new socket client
         logger.info("classifier payload {}",payload);
         TopologyDesc topo=TopologyDesc.getInstance();
         JsonNode specifierNode;

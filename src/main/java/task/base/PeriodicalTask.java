@@ -1,4 +1,4 @@
-package apps.smartfwd.src.main.java.task;
+package apps.smartfwd.src.main.java.task.base;
 
 
 import apps.smartfwd.src.main.java.constants.App;
@@ -10,18 +10,17 @@ import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
-public abstract class PeriodicalTask implements Runnable{
-    private final Logger logger= LoggerFactory.getLogger(getClass().getName());
+public abstract class PeriodicalTask extends AbstractStoppableTask{
+
     public interface Worker{
         void doWork();
     }
-    ScheduledExecutorService service= App.getInstance().getScheduledPool();
-    AtomicBoolean isRunning=new AtomicBoolean(false);
+    protected ScheduledExecutorService scheduledPool = App.getInstance().getScheduledPool();
     //seconds
     int interval=5;
     int delay=10;
-    ScheduledFuture<?> handle;
-    Worker worker;
+   protected ScheduledFuture<?> handle;
+    protected Worker worker;
 
     public int getInterval() {
         return interval;
@@ -52,7 +51,7 @@ public abstract class PeriodicalTask implements Runnable{
     }
     public void start(){
         if(!isRunning.get()){
-            handle=service.scheduleAtFixedRate(this,delay, this.interval,TimeUnit.SECONDS);
+            handle= scheduledPool.scheduleAtFixedRate(this,delay, this.interval,TimeUnit.SECONDS);
         }
     }
     public void stop(){

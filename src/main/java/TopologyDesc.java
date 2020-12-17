@@ -82,7 +82,6 @@ public class TopologyDesc {
             connectionPort.put(SwitchPair.switchPair(dst.deviceId(),src.deviceId()),dst.port());
         }
 
-
     }
     public Set<DeviceId> getDeviceIds(){
         return this.deviceIds;

@@ -30,7 +30,7 @@ public class SocketClientTask extends AbstractStoppableTask {
             //for docker test only
             //todo delete this
             InetAddress address = InetAddress.getByName(this.ip);
-            socketChannel.connect(new InetSocketAddress(address.getHostAddress(),this.port));
+            socketChannel.connect(new InetSocketAddress(this.ip,this.port));
             ByteBuffer byteBuffer = ByteBuffer.allocate(512 * 1024);
             byteBuffer.put(this.payload.getBytes());
             byteBuffer.flip();

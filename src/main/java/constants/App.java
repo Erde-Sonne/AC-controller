@@ -21,9 +21,9 @@ public class App {
     public ScheduledExecutorService getScheduledPool(){
         return scheduledPool;
     }
-    public static final String DEFAULT_ROUTING_IP="host.docker.internal";
+    public static final String DEFAULT_ROUTING_IP="192.168.1.196";
     public static final int DEFAULT_ROUTING_PORT=1038;
-    public static final String OPT_ROUTING_IP="host.docker.internal";
+    public static final String OPT_ROUTING_IP="192.168.1.196";
     public static final int OPT_ROUTING_PORT=1038;
 
     public static final String LISTENING_IP="0.0.0.0";

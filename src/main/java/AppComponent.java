@@ -263,6 +263,7 @@ public class AppComponent {
         }
     };
 
+
     @Activate
     protected void activate() {
         logger.info("Activate started-------------");
@@ -284,7 +285,7 @@ public class AppComponent {
         classifierServer=new SocketServerTask(App.CLASSIFIER_LISTENING_PORT,classifierHandler);
         classifierServer.start();
         logger.info("Socket server for flow classifier started");
-//
+
 //        //start traffic collector
         logger.info("Start traffic matrix collector");
         trafficMatrixCollector=new TrafficMatrixCollector(flowRuleService,TopologyDesc.getInstance(),trafficMatrixCollectorHandler);
@@ -296,6 +297,7 @@ public class AppComponent {
         portRateCollector.start();
         logger.info("Port Rate collector start");
 //        //start opt routing request;
+        logger.info("----!!!!!!");
         optRoutingRequestTask=new PeriodicalSocketClientTask(App.OPT_ROUTING_IP,App.OPT_ROUTING_PORT,optRoutingReqGenerator, optRoutingRespHandler);
         optRoutingRequestTask.start();
     }
@@ -403,7 +405,7 @@ public class AppComponent {
         TopologyDesc topo=TopologyDesc.getInstance();
         String req="default*";
         SocketClientTask.ResponseHandler responseHandler = payload -> {
-            logger.info(payload);
+//            logger.info(payload);
             try{
                 ObjectMapper mapper=new ObjectMapper();
                 JsonNode root=mapper.readTree(payload);
@@ -490,87 +492,5 @@ public class AppComponent {
     }
 
 
-    /**
-     * 通过五元组信息以及分类信息安装流表项到table0.此流表项优先级最高.
-     * @param srcPort
-     * @param dstPort
-     * @param srcIp
-     * @param dstIP
-     * @param protocol
-     * @param vlanId
-     * @param deviceId
-     */
-    private void installBy5Tuple(String srcPort, String dstPort, String srcIp, String dstIP, String protocol,
-                                 short vlanId, DeviceId deviceId) {
-        DefaultFlowRule.Builder ruleBuilder = DefaultFlowRule.builder();
-        TrafficSelector.Builder selectBuilder = DefaultTrafficSelector.builder();
-        selectBuilder.matchEthType(Ethernet.TYPE_IPV4)
-                .matchVlanId(VlanId.ANY)
-                .matchIPSrc(IpPrefix.valueOf(srcIp))
-                .matchIPDst(IpPrefix.valueOf(dstIP));
-        if (protocol.equals("UDP")) {
-            selectBuilder.matchUdpSrc(TpPort.tpPort(Integer.parseInt(srcPort)))
-                    .matchUdpDst(TpPort.tpPort(Integer.parseInt(dstPort)))
-                    .matchIPProtocol(IPv4.PROTOCOL_UDP);
-        }else {
-            selectBuilder.matchTcpSrc(TpPort.tpPort(Integer.parseInt(srcPort)))
-                    .matchTcpDst(TpPort.tpPort(Integer.parseInt(dstPort)))
-                    .matchIPProtocol(IPv4.PROTOCOL_TCP);
-        }
-        TrafficTreatment.Builder trafficBuilder = DefaultTrafficTreatment.builder();
-        trafficBuilder.setVlanId(VlanId.vlanId(vlanId))
-                .transition(1);
-        ruleBuilder.withSelector(selectBuilder.build())
-                .withTreatment(trafficBuilder.build())
-                .withPriority(55000)
-                .forTable(0)
-                .fromApp(App.appId)
-                .withIdleTimeout(300)
-                .forDevice(deviceId);
-        FlowRuleOperations.Builder flowRuleBuilder = FlowRuleOperations.builder();
-        flowRuleBuilder.add(ruleBuilder.build());
-        flowRuleService.apply(flowRuleBuilder.build());
-    }
-
-
-
-//    public String getFlowRate() {
-//      /*  Set<String> keySet = testSwMap.keySet();
-//        JsonObject matrixRes = new JsonObject();
-//        for(String key : keySet) {
-//            DeviceId deviceId = testSwMap.get(key);
-//            PortStatistics deltaStatisticsForPort = deviceService.getDeltaStatisticsForPort(deviceId, PortNumber.portNumber("1"));
-//            long l = deltaStatisticsForPort.bytesReceived();
-//            matrixRes.set(key, l);
-//        }
-//        return matrixRes.toString();*/
-////        DeviceId deviceId = testSwMap.get("0");
-////        PortStatistics deltaStatisticsForPort = deviceService.getDeltaStatisticsForPort(deviceId, PortNumber.portNumber("1"));
-////        long l = deltaStatisticsForPort.bytesReceived();
-////        return String.valueOf(l);
-//    }
-
-
-    private String getMaxEdgeRate() {
-        try {
-            Topology topology = topologyService.currentTopology();
-            TopologyGraph graph = topologyService.getGraph(topology);
-            Set<TopologyEdge> edges = graph.getEdges();
-            ArrayList<Long> longs = new ArrayList<>();
-            for (TopologyEdge edge : edges) {
-                ConnectPoint src = edge.link().src();
-                long rate = portStatisticsService.load(src).rate();
-                longs.add(rate);
-            }
-            Collections.sort(longs);
-            int size = longs.size();
-            Long long1 = longs.get(size - 1);
-            Double out1 = Double.parseDouble(String.valueOf(long1 * 8 / 10000)) * 0.01;
-            return "Max:" + out1.toString() + "***";
-        } catch (Exception e) {
-            logger.info(e.toString());
-            return "-------->>>>>>>" + e.toString();
-        }
-    }
 }
 

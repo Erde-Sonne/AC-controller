@@ -19,7 +19,7 @@ public abstract class PeriodicalTask extends AbstractStoppableTask{
     //seconds
     int interval=5;
     int delay=10;
-   protected ScheduledFuture<?> handle;
+    protected ScheduledFuture<?> handle;
     protected Worker worker;
 
     public int getInterval() {
@@ -42,7 +42,7 @@ public abstract class PeriodicalTask extends AbstractStoppableTask{
 
     public void run(){
         try{
-            worker.doWork();
+                worker.doWork();
         }catch (Exception e){
             logger.info(e.getLocalizedMessage());
 //            logger.info(e.getMessage());
@@ -51,7 +51,7 @@ public abstract class PeriodicalTask extends AbstractStoppableTask{
     }
     public void start(){
         if(!isRunning.get()){
-            handle= scheduledPool.scheduleAtFixedRate(this,delay, this.interval,TimeUnit.SECONDS);
+            handle= scheduledPool.scheduleWithFixedDelay(this,delay, this.interval,TimeUnit.SECONDS);
         }
     }
     public void stop(){

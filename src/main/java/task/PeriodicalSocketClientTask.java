@@ -31,7 +31,7 @@ public class PeriodicalSocketClientTask extends PeriodicalTask {
                 //for docker test only
                 //todo delete this
                 InetAddress address = InetAddress.getByName(this.ip);
-                socketChannel.connect(new InetSocketAddress(address.getHostAddress(),this.port));
+                socketChannel.connect(new InetSocketAddress(this.ip,this.port));
                 ByteBuffer byteBuffer = ByteBuffer.allocate(512 * 1024);
                 String payload=this.payloadGenerator.payload();
                 if(null==payload) return;

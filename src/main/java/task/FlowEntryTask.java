@@ -25,7 +25,6 @@ public class FlowEntryTask extends AbstractStoppableTask {
                 flowEntry.install(southboundService);
             }catch (InterruptedException exception){
                 stopRequested=true;
-                return;
             }
         }
         isRunning.set(false);

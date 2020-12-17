@@ -6,8 +6,7 @@ import org.onosproject.net.DeviceId;
 import org.onosproject.net.PortNumber;
 import org.onosproject.net.flow.*;
 
-
-class Filter{
+ class Filter{
     IpPrefix srcIP;
     IpPrefix dstIP;
     byte protocol=-1;

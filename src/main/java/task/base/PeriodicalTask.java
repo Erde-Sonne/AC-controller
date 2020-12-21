@@ -17,8 +17,9 @@ public abstract class PeriodicalTask extends AbstractStoppableTask{
     }
     protected ScheduledExecutorService scheduledPool = App.getInstance().getScheduledPool();
     //seconds
-    int interval=5;
-    int delay=10;
+    int interval=7;
+    int delay=5;
+    boolean oneTime = false;
     protected ScheduledFuture<?> handle;
     protected Worker worker;
 
@@ -40,18 +41,29 @@ public abstract class PeriodicalTask extends AbstractStoppableTask{
         return this;
     }
 
+    public PeriodicalTask setOneTime(boolean t) {
+        this.oneTime = t;
+        return this;
+    }
+
     public void run(){
         try{
                 worker.doWork();
         }catch (Exception e){
-            logger.info(e.getLocalizedMessage());
+            //logger.info(e.getLocalizedMessage());
+            logger.info(getStackTrace(e));
 //            logger.info(e.getMessage());
 //            e.printStackTrace();
         }
     }
     public void start(){
         if(!isRunning.get()){
-            handle= scheduledPool.scheduleWithFixedDelay(this,delay, this.interval,TimeUnit.SECONDS);
+            if(oneTime) {
+                handle= scheduledPool.schedule(this, this.delay, TimeUnit.SECONDS);
+            } else {
+                handle= scheduledPool.scheduleAtFixedRate(this,delay, this.interval,TimeUnit.SECONDS);
+            }
+
         }
     }
     public void stop(){
@@ -62,6 +74,16 @@ public abstract class PeriodicalTask extends AbstractStoppableTask{
     }
     public boolean isRunning(){
         return isRunning.get();
+    }
+
+    private static String getStackTrace(Exception ex) {
+        StringBuffer sb = new StringBuffer(500);
+        StackTraceElement[] st = ex.getStackTrace();
+        sb.append(ex.getClass().getName() + ": " + ex.getMessage() + "\n");
+        for (int i = 0; i < st.length; i++) {
+            sb.append("\t at " + st[i].toString() + "\n");
+        }
+        return sb.toString();
     }
 }
 

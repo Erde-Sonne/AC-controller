@@ -170,12 +170,12 @@ public class FlowTableEntry {
         return true;
     }
 
-    public boolean install(FlowRuleService service){
+    public FlowRule install(FlowRuleService service){
         DefaultFlowRule.Builder ruleBuilder=DefaultFlowRule.builder();
         TrafficSelector.Builder selectorBuilder= DefaultTrafficSelector.builder();
         selectorBuilder.matchEthType(Ethernet.TYPE_IPV4);
         if(!check()){
-            return false;
+            return null;
         }
 
         if(null!=_filter.srcIP){
@@ -243,9 +243,10 @@ public class FlowTableEntry {
 //                .withPriority(priority)
 //                .for
         FlowRuleOperations.Builder flowRuleOpBuilder=FlowRuleOperations.builder();
-        flowRuleOpBuilder.add(ruleBuilder.build());
+        FlowRule build = ruleBuilder.build();
+        flowRuleOpBuilder.add(build);
         service.apply(flowRuleOpBuilder.build());
-        return true;
+        return build;
 
     }
 

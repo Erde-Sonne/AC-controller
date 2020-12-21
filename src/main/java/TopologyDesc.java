@@ -114,6 +114,21 @@ public class TopologyDesc {
         return hosts;
     }
 
+    public void updateConnectionPort() {
+        connectionPort.clear();
+        //connection port
+        Topology topo=this.topologyService.currentTopology();
+        TopologyGraph graph=this.topologyService.getGraph(topo);
+        Set<TopologyEdge> edges = graph.getEdges();
+        for (TopologyEdge edge : edges) {
+            ConnectPoint src = edge.link().src();
+            ConnectPoint dst = edge.link().dst();
+            connectionPort.put(SwitchPair.switchPair(src.deviceId(),dst.deviceId()),src.port());
+            connectionPort.put(SwitchPair.switchPair(dst.deviceId(),src.deviceId()),dst.port());
+        }
+
+    }
+
     public Set<IpPrefix> getConnectedIps(DeviceId did){
         if(!connectedIPs.containsKey(did)){
             connectedIPs.put(did,new HashSet<>());
@@ -122,7 +137,7 @@ public class TopologyDesc {
     }
 
     public static TopologyDesc getInstance(DeviceService deviceService, HostService hostService,TopologyService topologyService){
-        if(null==instance){
+        if(null == instance) {
             instance=new TopologyDesc(deviceService,hostService,topologyService);
         }
         return instance;

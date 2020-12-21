@@ -35,7 +35,7 @@ public class PeriodicalSocketClientTask extends PeriodicalTask {
                 ByteBuffer byteBuffer = ByteBuffer.allocate(512 * 1024);
                 String payload=this.payloadGenerator.payload();
                 if(null==payload) return;
-                byteBuffer.put(this.payloadGenerator.payload().getBytes());
+                byteBuffer.put(payload.getBytes());
                 byteBuffer.flip();
                 socketChannel.write(byteBuffer);
                 while (byteBuffer.hasRemaining()) {

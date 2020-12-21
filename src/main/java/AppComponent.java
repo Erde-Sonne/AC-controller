@@ -21,6 +21,9 @@ import apps.smartfwd.src.main.java.constants.FlowEntryTimeout;
 import apps.smartfwd.src.main.java.constants.Env;
 import apps.smartfwd.src.main.java.models.SwitchPair;
 import apps.smartfwd.src.main.java.task.*;
+import apps.smartfwd.src.main.java.task.base.PeriodicalTask;
+import com.eclipsesource.json.JsonArray;
+import com.eclipsesource.json.JsonObject;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -48,10 +51,14 @@ import org.osgi.service.component.annotations.Reference;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.io.BufferedWriter;
+import java.io.File;
+import java.io.FileWriter;
 import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.nio.ByteBuffer;
 import java.nio.channels.SocketChannel;
+import java.text.SimpleDateFormat;
 import java.util.*;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicReference;
@@ -95,14 +102,73 @@ public class AppComponent {
 
     BlockingQueue<FlowTableEntry> flowEntries=new LinkedBlockingQueue<>();
 
-
-
     FlowEntryTask flowEntryTask;
     SocketServerTask classifierServer;
+    private ArrayList<FlowRule> defaultFlowRulesCache = new ArrayList<>();
+    private ArrayList<FlowRule> optiFlowRulesCache = new ArrayList<>();
+    String topoIdxJson = "{ \"topo_idx\" : 0}";
+
+
+    PeriodicalSocketClientTask.RequestGenerator defaultIdxRouteReq = new PeriodicalSocketClientTask.RequestGenerator() {
+        @Override
+        public String payload() {
+            return topoIdxJson + "*";
+        }
+    };
+    PeriodicalSocketClientTask.ResponseHandler defaultIdxRouteHandler = new PeriodicalSocketClientTask.ResponseHandler() {
+        @Override
+        public void handle(String payload) {
+            //clear default route
+            emptyDefaultFlow();
+            TopologyDesc topo=TopologyDesc.getInstance();
+            try{
+                ObjectMapper mapper=new ObjectMapper();
+                JsonNode root=mapper.readTree(payload);
+                JsonNode routings=root.get("res1");
+                for(int i=0;i<routings.size();i++){
+                    JsonNode routing=routings.get(i);
+                    int start=routing.get(0).asInt();
+                    int end=routing.get(routing.size()-1).asInt();
+                    for(IpPrefix srcAddr:topo.getConnectedIps(topo.getDeviceId(start))){
+                        for(IpPrefix dstAddr:topo.getConnectedIps(topo.getDeviceId(end))){
+                            for(int j=0;j<routing.size()-1;j++){
+                                int curr=routing.get(j).asInt();
+                                int next=routing.get(j+1).asInt();
+                                DeviceId currDeviceId=topo.getDeviceId(curr);
+                                DeviceId nextHopDeviceId=topo.getDeviceId(next);
+                                PortNumber output=topo.getConnectionPort(currDeviceId,nextHopDeviceId);
+                                if(output.equals(INVALID_PORT)){
+                                    continue;
+                                    //todo log
+                                }
+                                FlowTableEntry entry=new FlowTableEntry();
+                                entry.setDeviceId(currDeviceId)
+                                        .setPriority(FlowEntryPriority.TABLE2_DEFAULT_ROUTING)
+                                        .setTable(2);
+                                entry.filter()
+                                        .setSrcIP(srcAddr)
+                                        .setDstIP(dstAddr);
+                                entry.action()
+                                        .setOutput(output);
+                                FlowRule rule = entry.install(flowRuleService);
+                                defaultFlowRulesCache.add(rule);
+                            }
+                        }
+                    }
+
+
+                }
+                logger.info("---------default routing have been installed----------");
+            }
+            catch (JsonProcessingException e) {
+                e.printStackTrace();
+            }
+        }
+    };
 
     SocketServerTask.Handler classifierHandler= payload -> {
         //start new socket client
-        logger.info("classifier payload {}",payload);
+//        logger.info("classifier payload {}",payload);
         TopologyDesc topo=TopologyDesc.getInstance();
         JsonNode specifierNode;
         JsonNode statsNode;
@@ -127,7 +193,7 @@ public class AppComponent {
         }
         SocketClientTask task=new SocketClientTask(newPayload, response -> {
             //parse response and install flow entry
-            logger.info("classifier response {}",response);
+//            logger.info("classifier response {}",response);
             ObjectMapper m=new ObjectMapper();
             try {
                 JsonNode resNode=m.readTree(response);
@@ -175,14 +241,19 @@ public class AppComponent {
         }
     };
     TrafficMatrixCollector trafficMatrixCollector;
-    PeriodicalSocketClientTask optRoutingRequestTask;
+
+
+
     PeriodicalSocketClientTask.ResponseHandler optRoutingRespHandler = resp -> {
+//        writeToFile(getCurrentMaxRate().toString(), "/home/theMaxRate.txt");
+//        writeToFile(getAllRate(), "/home/matchRate.txt");
+        emptyOptiFlow();
         TopologyDesc topo=TopologyDesc.getInstance();
         ObjectMapper mapper=new ObjectMapper();
         try {
             JsonNode root=mapper.readTree(resp);
             for(int i=0;i<Env.N_FLOWS;i++){
-                JsonNode node=root.get(String.valueOf(i));
+                JsonNode node=root.get("res" + String.valueOf(i+1));
                 for(int k=0;k<node.size();k++){
                     JsonNode routing=node.get(k);
                     int start=routing.get(0).asInt();
@@ -209,18 +280,31 @@ public class AppComponent {
                                         .setVlanId(i);
                                 entry.action()
                                         .setOutput(output);
-                                flowEntries.put(entry);
+                                FlowRule rule = entry.install(flowRuleService);
+                                optiFlowRulesCache.add(rule);
                             }
                         }
                     }
 
                 }
             }
+            logger.info("---------opt routing have been installed----------");
+            try {
+                Thread.sleep(12000);
+            } catch (InterruptedException e) {
+                e.printStackTrace();
+            }
+            writeToFile(getCurrentMaxRate().toString(), "/home/theMaxRate.txt");
+            writeToFile("---------------------------->>>", "/home/theMaxRate.txt");
+            writeToFile(getAllRate(), "/home/matchRate.txt");
+            try {
+                Thread.sleep(60000);
+            } catch (InterruptedException e) {
+                e.printStackTrace();
+            }
+            emptyOptiFlow();
+
         } catch (JsonProcessingException e) {
-            e.printStackTrace();
-        }
-        catch (InterruptedException e) {
-            logger.info("Interrupted producer");
             e.printStackTrace();
         }
     };
@@ -239,18 +323,35 @@ public class AppComponent {
                 for(int i=0;i<Env.N_SWITCH;i++){
                     for(int j=0;j<Env.N_SWITCH;j++){
                         if(i==j) continue;
-                        stats.add(traffic.get(f).get(SwitchPair.switchPair(topo.getDeviceId(i),topo.getDeviceId(j))));
+                        SwitchPair switchPair = SwitchPair.switchPair(topo.getDeviceId(i),topo.getDeviceId(j));
+                        Long res=traffic.get(f).get(switchPair);
+                        if(res == null) {
+                            logger.info("i:" + String.valueOf(i) + "j:" + j);
+                            res = 0L;
+                        }
+                        stats.add(res);
                     }
                 }
             }
-            ObjectMapper mapper=new ObjectMapper();
-            String payload=null;
-            try {
-                    payload= mapper.writeValueAsString(content);
-            } catch (JsonProcessingException e) {
-                logger.info(e.getOriginalMessage());
-                    e.printStackTrace();
+
+//            logger.info(content.toString());
+            JsonObject matrixRes = new JsonObject();
+            JsonArray jsonArray = new JsonArray();
+            for(int f = 0; f < Env.N_FLOWS; f++) {
+                for(Long value : content.get(String.valueOf(f))) {
+                    jsonArray.add(value);
+                }
             }
+            matrixRes.set("volumes", jsonArray);
+            ObjectMapper mapper=new ObjectMapper();
+            try {
+                JsonNode topoIdx = mapper.readTree(topoIdxJson);
+                int topo_idx = topoIdx.get("topo_idx").asInt();
+                matrixRes.set("topo_idx", topo_idx);
+            } catch (JsonProcessingException e) {
+                e.printStackTrace();
+            }
+            String payload=matrixRes.toString();
             return payload+"*";
         }
     };
@@ -260,7 +361,31 @@ public class AppComponent {
         @Override
         public void consume(Map<SwitchPair, Long> stats) {
             portRate.set(stats);
+            writeToFile(getAllRate(), "/home/allRate.txt");
         }
+    };
+
+
+    SocketServerTask topoIdxServerTask;
+    SocketServerTask.Handler topoIdxHandler = payload -> {
+        logger.error("topo_idx info{}", payload);
+        topoIdxJson = payload;
+        TopologyDesc topo=TopologyDesc.getInstance();
+        //update the port info
+        topo.updateConnectionPort();
+
+        SocketClientTask.ResponseHandler responseH = res -> {
+
+        };
+        SocketClientTask task=new SocketClientTask(topoIdxJson + "*", responseH,App.DEFAULT_ROUTING_IP,
+                App.DEFAULT_ROUTING_PORT);
+        task.start();
+
+
+        PeriodicalSocketClientTask defaultIdxRouteClientTask = new PeriodicalSocketClientTask(App.DEFAULT_ROUTING_IP,
+                App.DEFAULT_ROUTING_PORT, defaultIdxRouteReq, defaultIdxRouteHandler);
+        defaultIdxRouteClientTask.setOneTime(true).setDelay(50);
+        defaultIdxRouteClientTask.start();
     };
 
 
@@ -282,9 +407,13 @@ public class AppComponent {
         logger.info("Flow entry installation worker started");
 //        //start flow classifier server;
         logger.info("Start socket server for flow classifier");
-        classifierServer=new SocketServerTask(App.CLASSIFIER_LISTENING_PORT,classifierHandler);
+        classifierServer=new SocketServerTask(App.CLASSIFIER_LISTENING_IP, App.CLASSIFIER_LISTENING_PORT,classifierHandler);
         classifierServer.start();
         logger.info("Socket server for flow classifier started");
+
+        logger.info("Topo changed idx server start");
+        topoIdxServerTask = new SocketServerTask(App.TOPO_IDX_IP, App.TOPO_IDX_PORT, topoIdxHandler);
+        topoIdxServerTask.start();
 
 //        //start traffic collector
         logger.info("Start traffic matrix collector");
@@ -296,25 +425,22 @@ public class AppComponent {
         portRateCollector=new PortStatsCollectTask(portStatisticsService,topologyService,portRateConsumer);
         portRateCollector.start();
         logger.info("Port Rate collector start");
-//        //start opt routing request;
-        logger.info("----!!!!!!");
-        optRoutingRequestTask=new PeriodicalSocketClientTask(App.OPT_ROUTING_IP,App.OPT_ROUTING_PORT,optRoutingReqGenerator, optRoutingRespHandler);
-        optRoutingRequestTask.start();
+
+        optiCondition();
+
     }
 
     @Deactivate
     protected void deactivate() {
         App.getInstance().getPool().shutdownNow();
-        App.getInstance().getPool().shutdownNow();
         App.getInstance().getScheduledPool().shutdownNow();
         flowEntryTask.stop();
         classifierServer.stop();
         trafficMatrixCollector.stop();
-        optRoutingRequestTask.stop();
+        portRateCollector.stop();
         flowRuleService.removeFlowRulesById(App.appId);
         logger.info("--------------------System Stopped-------------------------");
     }
-
 
 
     /**
@@ -403,13 +529,13 @@ public class AppComponent {
 
     void installDefaultRoutingToTable2(){
         TopologyDesc topo=TopologyDesc.getInstance();
-        String req="default*";
+        String req="{ \"topo_idx\" : 0}*";
         SocketClientTask.ResponseHandler responseHandler = payload -> {
 //            logger.info(payload);
             try{
                 ObjectMapper mapper=new ObjectMapper();
                 JsonNode root=mapper.readTree(payload);
-                JsonNode routings=root.get("default");
+                JsonNode routings=root.get("res1");
                 for(int i=0;i<routings.size();i++){
                     JsonNode routing=routings.get(i);
                     int start=routing.get(0).asInt();
@@ -435,7 +561,8 @@ public class AppComponent {
                                         .setDstIP(dstAddr);
                                 entry.action()
                                         .setOutput(output);
-                                entry.install(flowRuleService);
+                                FlowRule rule = entry.install(flowRuleService);
+                                defaultFlowRulesCache.add(rule);
                             }
                         }
                     }
@@ -461,6 +588,91 @@ public class AppComponent {
             entry.action()
                     .setDrop(true);
             entry.install(flowRuleService);
+        }
+    }
+
+    /**
+     * 清空默认流表项.
+     */
+    void emptyDefaultFlow() {
+        if (defaultFlowRulesCache.size() != 0) {
+            for (FlowRule flowRule : defaultFlowRulesCache) {
+                flowRuleService.removeFlowRules(flowRule);
+            }
+            // 清空数据
+            defaultFlowRulesCache.clear();
+        }
+        logger.info("---------have emptyed the default flowEntries----------------");
+    }
+
+    /**
+     * 清空优化流表项.
+     */
+    void emptyOptiFlow() {
+        if (optiFlowRulesCache.size() != 0) {
+            for (FlowRule flowRule : optiFlowRulesCache) {
+                flowRuleService.removeFlowRules(flowRule);
+            }
+            // 清空数据
+            optiFlowRulesCache.clear();
+        }
+        logger.info("---------have emptyed the optimize flowEntries----------------");
+    }
+
+    public Double getCurrentMaxRate() {
+        long max = 0L;
+        Map<SwitchPair, Long> map = portRate.get();
+        if(null == map) {
+            return 0.0;
+        }
+        for(long rate : map.values()) {
+            max = Math.max(max, rate);
+        }
+        return max * 8 / 1000000.0;
+    }
+
+    public String getAllRate() {
+        ArrayList<Double> res = new ArrayList<>();
+        Map<SwitchPair, Long> map = portRate.get();
+        if(null == map) {
+            return "";
+        }
+        for(long rate : map.values()) {
+            res.add(rate * 8/ 1000000.0);
+        }
+        Collections.sort(res);
+        return res.toString();
+    }
+
+    public void optiCondition() {
+       /* PeriodicalSocketClientTask optRoutingRequestTask = new PeriodicalSocketClientTask(App.OPT_ROUTING_IP,
+                App.OPT_ROUTING_PORT, optRoutingReqGenerator, optRoutingRespHandler);
+        optRoutingRequestTask.setDelay(120).setInterval(200);
+        optRoutingRequestTask.start();*/
+        OptiConditionTask conditionTask = new OptiConditionTask(portRate, optRoutingReqGenerator, optRoutingRespHandler, 150);
+        conditionTask.setInterval(10).start();
+    }
+
+    /**
+     * 把信息输出到文件.
+     * @param content
+     */
+    public void writeToFile(String content, String filePath) {
+        try {
+            File file = new File(filePath);
+            if(!file.exists()){
+                file.createNewFile();
+            }
+            FileWriter fileWriter = new FileWriter(file.getAbsoluteFile(), true);
+            BufferedWriter bw = new BufferedWriter(fileWriter);
+            SimpleDateFormat df = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
+            String format = df.format(new Date());
+            String out = format + "-->>" + content + "\n";
+            bw.write(out);
+            bw.close();
+//            log.info("finished write to file");
+        } catch (IOException e) {
+            logger.error(e.toString());
         }
     }
 
@@ -491,6 +703,58 @@ public class AppComponent {
         }
     }
 
+    class OptiConditionTask extends PeriodicalTask {
+        AtomicReference<Map<SwitchPair,Long>> portRate;
+        long preReqTime = 0L;
+        int interval;
+//    PeriodicalSocketClientTask.RequestGenerator optRoutingReqGenerator;
+//    PeriodicalSocketClientTask.ResponseHandler optRoutingRespHandler;
 
+        public OptiConditionTask(AtomicReference<Map<SwitchPair,Long>>  rates,
+                                 PeriodicalSocketClientTask.RequestGenerator optRoutingReqGenerator,
+                                 PeriodicalSocketClientTask.ResponseHandler optRoutingRespHandler,
+                                 int interval) {
+            this.portRate = rates;
+            this.interval = interval;
+//        this.optRoutingReqGenerator = optRoutingReqGenerator;
+//        this.optRoutingRespHandler = optRoutingRespHandler;
+            this.worker = () -> {
+                ArrayList<Double> res = new ArrayList<>();
+                Map<SwitchPair, Long> map = this.portRate.get();
+                if(null == map) {
+                    return;
+                }
+                for(long rate : map.values()) {
+                    res.add(rate * 8/ 1000000.0);
+                }
+                int cntBits = 0;
+                for(Double rate : res) {
+                    if(rate > 75.0) {
+                        cntBits++;
+                    }
+                }
+                long nowReqTime = new Date().getTime();
+                long intervalTime = nowReqTime - preReqTime;
+                if(cntBits >= 2) {
+                    logger.info("cntBits:--->" + cntBits);
+                    if(intervalTime >= this.interval * 1000) {
+                        logger.info("<<<<<<----------------request the opt routing----------------->>>>>>>>>>");
+                        writeToFile(getCurrentMaxRate().toString(), "/home/theMaxRate.txt");
+                        writeToFile(getAllRate(), "/home/matchRate.txt");
+                        PeriodicalSocketClientTask optRoutingRequestTask = new PeriodicalSocketClientTask(App.OPT_ROUTING_IP,
+                                App.OPT_ROUTING_PORT, optRoutingReqGenerator, optRoutingRespHandler);
+                        optRoutingRequestTask.setOneTime(true).setDelay(0);
+                        optRoutingRequestTask.start();
+                        preReqTime = nowReqTime;
+                    }
+
+                }
+
+            };
+        }
+    }
 }
+
+
+
 

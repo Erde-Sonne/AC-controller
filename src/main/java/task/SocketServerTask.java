@@ -18,10 +18,12 @@ public class SocketServerTask extends AbstractStoppableTask {
         void handle(String payload);
     }
     Handler handler;
+    String ip;
     int port;
     ServerSocketChannel channel=null;
 
-    public SocketServerTask(int port, Handler handler){
+    public SocketServerTask(String ip, int port, Handler handler){
+        this.ip = ip;
         this.port=port;
         this.handler=handler;
     }
@@ -31,7 +33,7 @@ public class SocketServerTask extends AbstractStoppableTask {
         ByteBuffer buffer = ByteBuffer.allocate(2048);
         try {
             channel = ServerSocketChannel.open();
-            channel.bind(new InetSocketAddress("0.0.0.0", this.port));
+            channel.bind(new InetSocketAddress(this.ip, this.port));
             channel.configureBlocking(false);
             selector = Selector.open();
             channel.register(selector, SelectionKey.OP_ACCEPT);

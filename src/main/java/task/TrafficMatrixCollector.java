@@ -73,6 +73,7 @@ public class TrafficMatrixCollector extends PeriodicalTask {
 
                 }
             }
+
             //diff and replace
             for(int i = 0; i< Env.N_FLOWS+1; i++){
                 Map<SwitchPair,Long> curr=currStats.get(i);

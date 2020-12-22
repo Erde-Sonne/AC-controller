@@ -119,6 +119,7 @@ public class AppComponent {
         @Override
         public void handle(String payload) {
             //clear default route
+            logger.info("request default routing");
             emptyDefaultFlow();
             TopologyDesc topo=TopologyDesc.getInstance();
             try{
@@ -298,7 +299,7 @@ public class AppComponent {
             writeToFile("---------------------------->>>", "/home/theMaxRate.txt");
             writeToFile(getAllRate(), "/home/matchRate.txt");
             try {
-                Thread.sleep(60000);
+                Thread.sleep(150000);
             } catch (InterruptedException e) {
                 e.printStackTrace();
             }
@@ -370,6 +371,7 @@ public class AppComponent {
     SocketServerTask.Handler topoIdxHandler = payload -> {
         logger.error("topo_idx info{}", payload);
         topoIdxJson = payload;
+        waitTopoDiscover();
         TopologyDesc topo=TopologyDesc.getInstance();
         //update the port info
         topo.updateConnectionPort();
@@ -384,7 +386,7 @@ public class AppComponent {
 
         PeriodicalSocketClientTask defaultIdxRouteClientTask = new PeriodicalSocketClientTask(App.DEFAULT_ROUTING_IP,
                 App.DEFAULT_ROUTING_PORT, defaultIdxRouteReq, defaultIdxRouteHandler);
-        defaultIdxRouteClientTask.setOneTime(true).setDelay(50);
+        defaultIdxRouteClientTask.setOneTime(true).setDelay(30);
         defaultIdxRouteClientTask.start();
     };
 
@@ -649,8 +651,41 @@ public class AppComponent {
                 App.OPT_ROUTING_PORT, optRoutingReqGenerator, optRoutingRespHandler);
         optRoutingRequestTask.setDelay(120).setInterval(200);
         optRoutingRequestTask.start();*/
-        OptiConditionTask conditionTask = new OptiConditionTask(portRate, optRoutingReqGenerator, optRoutingRespHandler, 150);
+        OptiConditionTask conditionTask = new OptiConditionTask(portRate, optRoutingReqGenerator, optRoutingRespHandler, 180);
         conditionTask.setInterval(10).start();
+    }
+
+    /**
+     * 一直等待topo发现完全.
+     */
+    void waitTopoDiscover() {
+        int topoId = 0;
+        int linksCount = 0;
+        logger.info("---------------discover topo waiting.....-----------------------");
+        while (true) {
+            linksCount = topologyService.currentTopology().linkCount();
+            try {
+                JsonNode jsonNode = new ObjectMapper().readTree(topoIdxJson);
+                topoId = jsonNode.get("topo_idx").intValue();
+            } catch (Exception e) {
+                e.printStackTrace();
+            }
+            if (topoId % 2 == 0) {
+                if (linksCount == 202) {
+                    break;
+                }
+            } else {
+                if (linksCount == 212) {
+                    break;
+                }
+            }
+            try {
+                Thread.sleep(50);
+            } catch (InterruptedException e) {
+                e.printStackTrace();
+            }
+        }
+        logger.info("--------topo discover complete------------");
     }
 
     /**

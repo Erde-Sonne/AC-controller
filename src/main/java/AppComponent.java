@@ -107,6 +107,7 @@ public class AppComponent {
     private ArrayList<FlowRule> defaultFlowRulesCache = new ArrayList<>();
     private ArrayList<FlowRule> optiFlowRulesCache = new ArrayList<>();
     String topoIdxJson = "{ \"topo_idx\" : 0}";
+    String rateFilePath = "";
 
 
     PeriodicalSocketClientTask.RequestGenerator defaultIdxRouteReq = new PeriodicalSocketClientTask.RequestGenerator() {
@@ -295,9 +296,11 @@ public class AppComponent {
             } catch (InterruptedException e) {
                 e.printStackTrace();
             }
-            writeToFile(getCurrentMaxRate().toString(), "/home/theMaxRate.txt");
-            writeToFile("---------------------------->>>", "/home/theMaxRate.txt");
-            writeToFile(getAllRate(), "/home/matchRate.txt");
+//            writeToFile(getCurrentMaxRate().toString(), "/home/theMaxRate.txt");
+//            writeToFile("---------------------------->>>", "/home/theMaxRate.txt");
+//            writeToFile(getAllRate(), "/home/matchRate.txt");
+//            writeToFile("after", rateFilePath);
+//            rateToFile(portRate, rateFilePath);
             try {
                 Thread.sleep(150000);
             } catch (InterruptedException e) {
@@ -362,7 +365,10 @@ public class AppComponent {
         @Override
         public void consume(Map<SwitchPair, Long> stats) {
             portRate.set(stats);
-            writeToFile(getAllRate(), "/home/allRate.txt");
+            long time = new Date().getTime();
+            rateFilePath = "/data/" + String.valueOf(time) + ".rate";
+            rateToFile(portRate, rateFilePath);
+//            writeToFile(getAllRate(), "/home/allRate.txt");
         }
     };
 
@@ -688,6 +694,24 @@ public class AppComponent {
         logger.info("--------topo discover complete------------");
     }
 
+    public void rateToFile(AtomicReference<Map<SwitchPair,Long>> portRate, String path) {
+        Map<SwitchPair, Long> map = portRate.get();
+        if(null == map) {
+            return;
+        }
+        Set<SwitchPair> switchPairs = map.keySet();
+        for(SwitchPair switchPair : switchPairs) {
+            DeviceId src = switchPair.src;
+            DeviceId dst = switchPair.dst;
+            TopologyDesc topologyDesc = TopologyDesc.getInstance();
+            Integer srcId = topologyDesc.deviceIDToSwitchID.get(src);
+            Integer dstId = topologyDesc.deviceIDToSwitchID.get(dst);
+            Long aLong = map.get(switchPair);
+            String out = srcId + " " + dstId + " " + aLong;
+            writeToFile(out, path);
+        }
+    }
+
     /**
      * 把信息输出到文件.
      * @param content
@@ -700,10 +724,11 @@ public class AppComponent {
             }
             FileWriter fileWriter = new FileWriter(file.getAbsoluteFile(), true);
             BufferedWriter bw = new BufferedWriter(fileWriter);
-            SimpleDateFormat df = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
+            /*SimpleDateFormat df = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
             String format = df.format(new Date());
             String out = format + "-->>" + content + "\n";
-            bw.write(out);
+            bw.write(out);*/
+            bw.write(content + "\n");
             bw.close();
 //            log.info("finished write to file");
         } catch (IOException e) {
@@ -774,8 +799,10 @@ public class AppComponent {
                     logger.info("cntBits:--->" + cntBits);
                     if(intervalTime >= this.interval * 1000) {
                         logger.info("<<<<<<----------------request the opt routing----------------->>>>>>>>>>");
-                        writeToFile(getCurrentMaxRate().toString(), "/home/theMaxRate.txt");
-                        writeToFile(getAllRate(), "/home/matchRate.txt");
+//                        long time = new Date().getTime();
+//                        rateFilePath = "/data/" + String.valueOf(time) + ".rate";
+//                        writeToFile("pre", rateFilePath);
+//                        rateToFile(portRate, rateFilePath);
                         PeriodicalSocketClientTask optRoutingRequestTask = new PeriodicalSocketClientTask(App.OPT_ROUTING_IP,
                                 App.OPT_ROUTING_PORT, optRoutingReqGenerator, optRoutingRespHandler);
                         optRoutingRequestTask.setOneTime(true).setDelay(0);

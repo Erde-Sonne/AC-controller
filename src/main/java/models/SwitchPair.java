@@ -7,8 +7,8 @@ import java.util.HashMap;
 import java.util.Map;
 
 public class SwitchPair{
-    final DeviceId src;
-    final DeviceId dst;
+    public final DeviceId src;
+    public final DeviceId dst;
     static TopologyDesc desc=TopologyDesc.getInstance();
     static Map<String,SwitchPair> cache=new HashMap<>();
     private SwitchPair(DeviceId s,DeviceId d){

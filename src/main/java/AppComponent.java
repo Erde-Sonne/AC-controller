@@ -247,8 +247,18 @@ public class AppComponent {
 
 
     PeriodicalSocketClientTask.ResponseHandler optRoutingRespHandler = resp -> {
-//        writeToFile(getCurrentMaxRate().toString(), "/home/theMaxRate.txt");
-//        writeToFile(getAllRate(), "/home/matchRate.txt");
+        writeTimeHeaderToFile("/data/theMaxRate.txt");
+        int topo_idx = 0;
+        try {
+            ObjectMapper mapper=new ObjectMapper();
+            JsonNode topoIdx = mapper.readTree(topoIdxJson);
+            topo_idx = topoIdx.get("topo_idx").asInt();
+        } catch (JsonProcessingException e) {
+            e.printStackTrace();
+        }
+        writeToFile("当前TOPO:" + topo_idx, "/data/theMaxRate.txt");
+        writeToFile("优化前:" + getCurrentMaxRate().toString() + " Mbit/s", "/data/theMaxRate.txt");
+        writeToFile("优化前:" + getAllRate(), "/data/matchRate.txt");
         emptyOptiFlow();
         TopologyDesc topo=TopologyDesc.getInstance();
         ObjectMapper mapper=new ObjectMapper();
@@ -296,9 +306,10 @@ public class AppComponent {
             } catch (InterruptedException e) {
                 e.printStackTrace();
             }
-//            writeToFile(getCurrentMaxRate().toString(), "/home/theMaxRate.txt");
-//            writeToFile("---------------------------->>>", "/home/theMaxRate.txt");
-//            writeToFile(getAllRate(), "/home/matchRate.txt");
+            writeTimeHeaderToFile("/data/theMaxRate.txt");
+            writeToFile("优化后：" + getCurrentMaxRate().toString() + " Mbit/s", "/data/theMaxRate.txt");
+            writeToFile("%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%", "/data/theMaxRate.txt");
+            writeToFile("优化后：" + getAllRate(), "/data/matchRate.txt");
 //            writeToFile("after", rateFilePath);
 //            rateToFile(portRate, rateFilePath);
             try {
@@ -368,10 +379,59 @@ public class AppComponent {
             long time = new Date().getTime();
             rateFilePath = "/data/" + String.valueOf(time) + ".rate";
             rateToFile(portRate, rateFilePath);
-//            writeToFile(getAllRate(), "/home/allRate.txt");
+            writeToFile(getAllRate(), "/data/allRate.txt");
         }
     };
 
+
+    SocketClientTask.ResponseHandler connectionDownHandler = response -> {
+        //清空优化路由流表项
+        emptyOptiFlow();
+        TopologyDesc topo=TopologyDesc.getInstance();
+        ObjectMapper mapper=new ObjectMapper();
+        try {
+            JsonNode root=mapper.readTree(response);
+            for(int i=0;i<Env.N_FLOWS;i++){
+                JsonNode node=root.get("res" + String.valueOf(i+1));
+                for(int k=0;k<node.size();k++){
+                    JsonNode routing=node.get(k);
+                    int start=routing.get(0).asInt();
+                    int end=routing.get(routing.size()-1).asInt();
+                    for(IpPrefix srcAddr:topo.getConnectedIps(topo.getDeviceId(start))){
+                        for(IpPrefix dstAddr:topo.getConnectedIps(topo.getDeviceId(end))){
+                            for(int j=0;j<routing.size()-1;j++){
+                                int curr=routing.get(j).asInt();
+                                int next=routing.get(j+1).asInt();
+                                DeviceId currDeviceId=topo.getDeviceId(curr);
+                                DeviceId nextHopDeviceId=topo.getDeviceId(next);
+                                PortNumber output=topo.getConnectionPort(currDeviceId,nextHopDeviceId);
+                                if(output.equals(INVALID_PORT)){
+                                    continue;
+                                    //todo log
+                                }
+                                FlowTableEntry entry=new FlowTableEntry();
+                                entry.setDeviceId(currDeviceId)
+                                        .setPriority(FlowEntryPriority.TABLE2_OPT_ROUTING)
+                                        .setTable(2);
+                                entry.filter()
+                                        .setSrcIP(srcAddr)
+                                        .setDstIP(dstAddr)
+                                        .setVlanId(i);
+                                entry.action()
+                                        .setOutput(output);
+                                FlowRule rule = entry.install(flowRuleService);
+                                optiFlowRulesCache.add(rule);
+                            }
+                        }
+                    }
+
+                }
+            }
+            logger.info("---------connection down routing have been installed----------");
+        } catch (JsonProcessingException e) {
+            e.printStackTrace();
+        }
+    };
 
     SocketServerTask topoIdxServerTask;
     SocketServerTask.Handler topoIdxHandler = payload -> {
@@ -383,7 +443,6 @@ public class AppComponent {
         topo.updateConnectionPort();
 
         SocketClientTask.ResponseHandler responseH = res -> {
-
         };
         SocketClientTask task=new SocketClientTask(topoIdxJson + "*", responseH,App.DEFAULT_ROUTING_IP,
                 App.DEFAULT_ROUTING_PORT);
@@ -394,6 +453,13 @@ public class AppComponent {
                 App.DEFAULT_ROUTING_PORT, defaultIdxRouteReq, defaultIdxRouteHandler);
         defaultIdxRouteClientTask.setOneTime(true).setDelay(30);
         defaultIdxRouteClientTask.start();
+//        try {
+//            Thread.sleep(15000);
+//        } catch (InterruptedException e) {
+//            e.printStackTrace();
+//        }
+//        List<Integer> asList = Arrays.asList(0, 1, 1, 0);
+//        connectionDownReq(asList);
     };
 
 
@@ -662,6 +728,31 @@ public class AppComponent {
     }
 
     /**
+     * 模拟链路断掉，将断掉链路信息传输给算法模块，并下发新的路由.
+     * @param downList
+     */
+    public void connectionDownReq(List<Integer> downList) {
+        JsonObject sendInfo = new JsonObject();
+        JsonArray jsonArray = new JsonArray();
+        for(int i : downList) {
+            jsonArray.add(i);
+        }
+        sendInfo.set("disconnectEdge", jsonArray);
+        ObjectMapper mapper=new ObjectMapper();
+        try {
+            JsonNode topoIdx = mapper.readTree(topoIdxJson);
+            int topo_idx = topoIdx.get("topo_idx").asInt();
+            sendInfo.set("topo_idx", topo_idx);
+        } catch (JsonProcessingException e) {
+            e.printStackTrace();
+        }
+        String payload = sendInfo.toString() + "*";
+        SocketClientTask connectionDownTask = new SocketClientTask(payload, connectionDownHandler,
+                App.C_DOWN_ROUTING_IP, App.C_DOWN_ROUTING_PORT);
+        connectionDownTask.start();
+    }
+
+    /**
      * 一直等待topo发现完全.
      */
     void waitTopoDiscover() {
@@ -734,6 +825,12 @@ public class AppComponent {
         } catch (IOException e) {
             logger.error(e.toString());
         }
+    }
+
+    public void writeTimeHeaderToFile(String filePath) {
+        SimpleDateFormat df = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
+        String format = df.format(new Date());
+        writeToFile(format, filePath);
     }
 
     private void installFlowEntryForMatrixCollection() {

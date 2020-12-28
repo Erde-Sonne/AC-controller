@@ -37,5 +37,8 @@ public class App {
     public static final String OPT_ROUTING_IP="192.168.1.196";
     public static final int OPT_ROUTING_PORT=1053;
 
+    public static final String C_DOWN_ROUTING_IP="192.168.1.196";
+    public static final int C_DOWN_ROUTING_PORT=1053;
+
 }
 

@@ -9,6 +9,8 @@ import org.onosproject.net.flow.*;
  class Filter{
     IpPrefix srcIP;
     IpPrefix dstIP;
+    MacAddress srcMac;
+    MacAddress dstMac;
     byte protocol=-1;
     int sport=-1;
     int dport=-1;
@@ -30,6 +32,24 @@ import org.onosproject.net.flow.*;
 
     public Filter setDstIP(IpPrefix dstIP) {
         this.dstIP = dstIP;
+        return this;
+    }
+
+    public MacAddress getSrcMac() {
+        return srcMac;
+    }
+
+    public Filter setSrcMac(MacAddress srcMac) {
+        this.srcMac = srcMac;
+        return this;
+    }
+
+    public MacAddress getDstMac() {
+        return dstMac;
+    }
+
+    public Filter setDstMac(MacAddress dstMac) {
+        this.dstMac = dstMac;
         return this;
     }
 
@@ -184,6 +204,12 @@ public class FlowTableEntry {
         }
         if(null!=_filter.dstIP){
             selectorBuilder.matchIPDst(_filter.dstIP);
+        }
+        if(null !=_filter.srcMac) {
+            selectorBuilder.matchEthSrc(_filter.srcMac);
+        }
+        if(null != _filter.dstMac) {
+            selectorBuilder.matchEthDst(_filter.dstMac);
         }
         if(-1!=_filter.vlanId){
             selectorBuilder.matchVlanId(VlanId.vlanId((short)_filter.vlanId));

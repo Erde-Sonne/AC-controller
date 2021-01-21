@@ -6,6 +6,8 @@ public class FlowEntryPriority {
     public static final int TABLE0_TAG_FLOW=60000;
     // table0 如果遇到已经打上标签的flow
     public static final int TABLE0_HANDLE_TAGGED_FLOW=59999;
+    // to nat
+    public static final int TABLE0_NAT_FLOW=49999;
     // table0 默认流表优先级,但是比fwd的优先级要高
     public static final int TABLE0_DEFAULT=10000;
 
@@ -18,6 +20,10 @@ public class FlowEntryPriority {
     public static final int TABLE2_DEFAULT_ROUTING=59999;
     //table2 drop
     public static final int TABLE2_DROP=40000;
+
+    public static final int NAT_DEFAULT_ROUTING=50000;
+
+
 }
 
 

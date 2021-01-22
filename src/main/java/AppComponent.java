@@ -467,11 +467,17 @@ public class AppComponent {
                 JsonNode node = dataJson.get("dstIds");
                 if(node.isArray()) {
                     int size = node.size();
-                    int[] dstIds = new int[size];
                     for(int i = 0; i < size; i++) {
-                        dstIds[i] = node.get(i).asInt();
+                        int dst = node.get(i).asInt();
+                        //安装到host的流表
+                        installFlowEntryToEndSwitch(dst);
+                        //计算出到资源服务器的路径
+                        Deque<Integer> path = Dijkstra(Env.graph, hostId, dst);
+                        logger.info(path.toString());
+                        hostRouteToDst(new LinkedList<>(path));
+                        dstRouteToHost(new LinkedList<>(path));
                     }
-                    logger.info("srcId:" + hostId + "    dstIds:" + Arrays.toString(dstIds));
+
                 }
             }
             if(toInternet == 1) {
@@ -555,7 +561,7 @@ public class AppComponent {
     void init() {
 
         //在table0 安装与host直连switch的默认路由
-        installFlowEntryToEndSwitch();
+//        installFlowEntryToEndSwitch(0);
         logger.info("Flow entry for end host installed");
         installFlowEntryToNatSwitch();
 //        //在table0 安装已经打标签的流的流表
@@ -579,7 +585,7 @@ public class AppComponent {
 //        getMatrixMission();
     }
 
-    void installFlowEntryToEndSwitch() {
+    void installFlowEntryToEndSwitch(int endSwitchId) {
 //        for(Device device:deviceService.getAvailableDevices()){
 //            for(Host host:hostService.getConnectedHosts(device.id())) {
 //                for(IpAddress ipAddr:host.ipAddresses()){
@@ -588,9 +594,9 @@ public class AppComponent {
                     FlowTableEntry entry=new FlowTableEntry();
                     entry.setTable(0)
                             .setPriority(FlowEntryPriority.TABLE0_HANDLE_LAST_HOP)
-                            .setDeviceId(TopologyDesc.getInstance().getDeviceId(0));
+                            .setDeviceId(TopologyDesc.getInstance().getDeviceId(endSwitchId));
                     entry.filter()
-                            .setDstIP(IpPrefix.valueOf("10.0.0.1/32"));
+                            .setDstIP(IpPrefix.valueOf("10.0.0." + (endSwitchId + 1) + "/32"));
                     entry.action()
                             .setOutput(PortNumber.portNumber("1"));
                     entry.install(flowRuleService);
@@ -1025,6 +1031,78 @@ public class AppComponent {
 
     }
 
+
+    public void hostRouteToDst(Deque<Integer> path) {
+        TopologyDesc topo = TopologyDesc.getInstance();
+        List<Integer> routing = new ArrayList<>();
+        int size = path.size();
+        for(int i = 0; i < size; i++) {
+            routing.add(path.pollFirst());
+        }
+        Integer dst = routing.get(size - 1);
+        for(int j=0;j<routing.size()-1;j++){
+            int curr=routing.get(j);
+            int next=routing.get(j+1);
+            DeviceId currDeviceId=topo.getDeviceId(curr);
+            DeviceId nextHopDeviceId=topo.getDeviceId(next);
+            PortNumber output=topo.getConnectionPort(currDeviceId,nextHopDeviceId);
+            if(output.equals(INVALID_PORT)){
+                logger.info("the adjacent switch port error");
+                continue;
+                //todo log
+            }
+            FlowTableEntry entry=new FlowTableEntry();
+            entry.setDeviceId(currDeviceId)
+                    .setPriority(flowPriority)
+                    .setTable(0);
+
+            entry.filter()
+                    .setDstIP(IpPrefix.valueOf("10.0.0." + (dst + 1) + "/32"));
+
+            entry.action()
+                    .setOutput(output);
+            FlowRule rule = entry.install(flowRuleService);
+            defaultFlowRulesCache.add(rule);
+        }
+
+    }
+
+    public void dstRouteToHost(Deque<Integer> path) {
+        TopologyDesc topo = TopologyDesc.getInstance();
+        List<Integer> routing = new ArrayList<>();
+        int size = path.size();
+        for(int i = 0; i < size; i++) {
+            routing.add(path.pollLast());
+        }
+        Integer dst = routing.get(0);
+
+        for(int j=0;j<routing.size()-1;j++){
+            int curr=routing.get(j);
+            int next=routing.get(j+1);
+            DeviceId currDeviceId=topo.getDeviceId(curr);
+            DeviceId nextHopDeviceId=topo.getDeviceId(next);
+            PortNumber output=topo.getConnectionPort(currDeviceId,nextHopDeviceId);
+            if(output.equals(INVALID_PORT)){
+                logger.info("the adjacent switch port error");
+                continue;
+                //todo log
+            }
+            FlowTableEntry entry=new FlowTableEntry();
+            entry.setDeviceId(currDeviceId)
+                    .setPriority(FlowEntryPriority.NAT_DEFAULT_ROUTING)
+                    .setTable(0);
+            entry.filter()
+                    .setSrcIP(IpPrefix.valueOf("10.0.0." + (dst + 1) + "/32"));
+            entry.action()
+                    .setOutput(output);
+            FlowRule rule = entry.install(flowRuleService);
+            defaultFlowRulesCache.add(rule);
+        }
+
+    }
+
+
+
     public void natRouteToHost(Deque<Integer> path, MacAddress dstMac) {
         TopologyDesc topo = TopologyDesc.getInstance();
         List<Integer> routing = new ArrayList<>();
@@ -1150,7 +1228,7 @@ public class AppComponent {
                 Deque<Integer> dijkstraPath = Dijkstra(Env.graph, srcId, 0);
                 logger.info(dijkstraPath.toString());
                 natRouteToHost(new LinkedList<>(dijkstraPath), macAddress);
-                hostRouteToNat(new LinkedList<>(dijkstraPath), IpPrefix.valueOf("192.168.1.136/24"), FlowEntryPriority.NAT_DEFAULT_ROUTING);
+                hostRouteToNat(new LinkedList<>(dijkstraPath), IpPrefix.valueOf("192.168.1.163/24"), FlowEntryPriority.NAT_DEFAULT_ROUTING);
             }
         }
 

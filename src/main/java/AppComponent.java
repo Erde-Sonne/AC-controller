@@ -452,33 +452,39 @@ public class AppComponent {
         }
     };
 
-    SocketServerTask topoIdxServerTask;
-    SocketServerTask.Handler topoIdxHandler = payload -> {
-        logger.error("topo_idx info{}", payload);
-        topoIdxJson = payload;
-        waitTopoDiscover();
-        TopologyDesc topo=TopologyDesc.getInstance();
-        //update the port info
-        topo.updateConnectionPort();
+    SocketServerTask listenWebServerTask;
+    SocketServerTask.Handler listenWebHandler = payload -> {
+        logger.info("!!!!!!!!!!!!!!!!!!!!!!!!");
+        logger.info("{}", payload);
+        ObjectMapper mapper=new ObjectMapper();
+        try {
+            JsonNode dataJson=mapper.readTree(payload);
+            int status = dataJson.get("status").asInt();
+            int toInternet = dataJson.get("toInternet").asInt();
+            int hostId = dataJson.get("hostId").asInt();
+            logger.info("status:" + status + " toInternet:" + toInternet + " hostId:" + hostId);
+            if(status == 1) {
+                JsonNode node = dataJson.get("dstIds");
+                if(node.isArray()) {
+                    int size = node.size();
+                    int[] dstIds = new int[size];
+                    for(int i = 0; i < size; i++) {
+                        dstIds[i] = node.get(i).asInt();
+                    }
+                    logger.info("srcId:" + hostId + "    dstIds:" + Arrays.toString(dstIds));
+                }
+            }
+            if(toInternet == 1) {
+                //允许host连接外网
+                logger.info("hostId:" + hostId + "can be connected to Internet");
+                Deque<Integer> path = Dijkstra(Env.graph, hostId, 0);
+                hostRouteToNat(path, FlowEntryPriority.INTERNET_ROUTING);
+            }
 
-        SocketClientTask.ResponseHandler responseH = res -> {
-        };
-        SocketClientTask task=new SocketClientTask(topoIdxJson + "*", responseH,App.DEFAULT_ROUTING_IP,
-                App.DEFAULT_ROUTING_PORT);
-        task.start();
+        } catch (JsonProcessingException e) {
+            e.printStackTrace();
+        }
 
-
-        PeriodicalSocketClientTask defaultIdxRouteClientTask = new PeriodicalSocketClientTask(App.DEFAULT_ROUTING_IP,
-                App.DEFAULT_ROUTING_PORT, defaultIdxRouteReq, defaultIdxRouteHandler);
-        defaultIdxRouteClientTask.setOneTime(true).setDelay(30);
-        defaultIdxRouteClientTask.start();
-//        try {
-//            Thread.sleep(15000);
-//        } catch (InterruptedException e) {
-//            e.printStackTrace();
-//        }
-//        List<Integer> asList = Arrays.asList(0, 1, 1, 0);
-//        connectionDownReq(asList);
     };
 
     private ReactivePacketProcessor processor = new ReactivePacketProcessor();
@@ -496,6 +502,10 @@ public class AppComponent {
         init();
         packetService.addProcessor(processor, PacketProcessor.director(1));
         requestIntercepts();
+
+        listenWebServerTask = new SocketServerTask(App.WEB_LISTENING_IP, App.WEB_LISTENING_PORT, listenWebHandler);
+        listenWebServerTask.start();
+        logger.info("listen web socket started");
 
         //start flow entry install worker
 //        logger.info("Start Flow entry installation worker");
@@ -533,6 +543,7 @@ public class AppComponent {
         App.getInstance().getScheduledPool().shutdownNow();
         packetService.removeProcessor(processor);
         flowRuleService.removeFlowRulesById(App.appId);
+        listenWebServerTask.stop();
         processor = null;
         logger.info("--------------------System Stopped-------------------------");
     }
@@ -584,25 +595,16 @@ public class AppComponent {
                             .setOutput(PortNumber.portNumber("1"));
                     entry.install(flowRuleService);
 
-                    FlowTableEntry entry1=new FlowTableEntry();
-                    entry1.setTable(0)
-                            .setPriority(FlowEntryPriority.TABLE0_HANDLE_LAST_HOP)
-                            .setDeviceId(TopologyDesc.getInstance().getDeviceId(9));
-                    entry1.filter()
-                            .setDstIP(IpPrefix.valueOf("10.0.0.10/32"));
-                    entry1.action()
-                            .setOutput(PortNumber.portNumber("1"));
-                    entry1.install(flowRuleService);
 
-        FlowTableEntry entry2=new FlowTableEntry();
-        entry2.setTable(0)
-                .setPriority(FlowEntryPriority.TABLE0_HANDLE_LAST_HOP)
-                .setDeviceId(TopologyDesc.getInstance().getDeviceId(9));
-        entry2.filter()
-                .setDstIP(IpPrefix.valueOf("10.0.0.20/32"));
-        entry2.action()
-                .setOutput(PortNumber.portNumber("2"));
-        entry2.install(flowRuleService);
+//        FlowTableEntry entry2=new FlowTableEntry();
+//        entry2.setTable(0)
+//                .setPriority(FlowEntryPriority.TABLE0_HANDLE_LAST_HOP)
+//                .setDeviceId(TopologyDesc.getInstance().getDeviceId(9));
+//        entry2.filter()
+//                .setDstIP(IpPrefix.valueOf("10.0.0.20/32"));
+//        entry2.action()
+//                .setOutput(PortNumber.portNumber("2"));
+//        entry2.install(flowRuleService);
 //                }
 //            }
 //        }
@@ -916,98 +918,66 @@ public class AppComponent {
     }
 
 
-    // Install a rule forwarding the packet to the specified port.
-    private void installRule(PacketContext context, PortNumber portNumber, ReactiveForwardMetrics macMetrics) {
-        //
-        // We don't support (yet) buffer IDs in the Flow Service so
-        // packet out first.
-        //
-        Ethernet inPkt = context.inPacket().parsed();
-        TrafficSelector.Builder selectorBuilder = DefaultTrafficSelector.builder();
-
-        TrafficTreatment treatment = DefaultTrafficTreatment.builder()
-                .setOutput(portNumber)
-                .build();
-
-        ForwardingObjective forwardingObjective = DefaultForwardingObjective.builder()
-                .withSelector(selectorBuilder.build())
-                .withTreatment(treatment)
-                .withPriority(flowPriority)
-                .withFlag(ForwardingObjective.Flag.VERSATILE)
-                .fromApp(App.appId)
-                .makeTemporary(flowTimeout)
-                .add();
-
-        flowObjectiveService.forward(context.inPacket().receivedFrom().deviceId(),
-                forwardingObjective);
-        forwardPacket(macMetrics);
-        //
-        // If packetOutOfppTable
-        //  Send packet back to the OpenFlow pipeline to match installed flow
-        // Else
-        //  Send packet direction on the appropriate port
-        //
-        if (packetOutOfppTable) {
-            packetOut(context, PortNumber.TABLE, macMetrics);
-        } else {
-            packetOut(context, portNumber, macMetrics);
+    public static Deque<Integer> Dijkstra(int[][] graph, int src, int dst) {
+        int n = graph.length;
+        int[] dist = new int[n];
+        int[] prev = new int[n];
+        dist[src] = 0;
+        prev[src] = -1;
+        PriorityQueue<int[]> Q = new PriorityQueue<>(new Comparator<int[]>() {
+            @Override
+            public int compare(int[] o1, int[] o2) {
+                return o1[1] - o2[1];
+            }
+        });
+        for(int v = 0; v < n; v++) {
+            if(v != src) {
+                dist[v] = Integer.MAX_VALUE;
+                prev[v] = -1;
+            }
+            Q.offer(new int[]{v, dist[v]});
         }
-    }
 
+        while (!Q.isEmpty()) {
+            int[] poll = Q.poll();
+            int u = poll[0];
+            if(u == dst) {
+                break;
+            }
 
-    private void  forwardPacket(ReactiveForwardMetrics macmetrics) {
-        if (recordMetrics) {
-            macmetrics.incrementForwardedPacket();
-            metrics.put(macmetrics.getMacAddress(), macmetrics);
-        }
-    }
-
-    // Selects a path from the given set that does not lead back to the
-    // specified port if possible.
-    private Path pickForwardPathIfPossible(Set<Path> paths, PortNumber notToPort) {
-        for (Path path : paths) {
-            if (!path.src().port().equals(notToPort)) {
-                return path;
+            for(int v = 0; v < n; v++) {
+                if(graph[u][v] == 1) {
+                    int alt = dist[u] + 1;
+                    if(alt < dist[v]) {
+                        dist[v] = alt;
+                        prev[v] = u;
+                        Q.offer(new int[] {v, alt});
+                    }
+                }
             }
         }
-        return null;
+        Deque<Integer> deque = new LinkedList<>();
+        if(prev[dst] != -1) {
+            while (dst != -1) {
+                deque.addFirst(dst);
+                dst = prev[dst];
+            }
+        }
+//        System.out.println(deque.toString());
+        return deque;
     }
 
-    private void replyPacket(ReactiveForwardMetrics macmetrics) {
-        if (recordMetrics) {
-            macmetrics.incremnetReplyPacket();
-            metrics.put(macmetrics.getMacAddress(), macmetrics);
-        }
-    }
 
     // Sends a packet out the specified port.
-    private void packetOut(PacketContext context, PortNumber portNumber, ReactiveForwardMetrics macMetrics) {
-        replyPacket(macMetrics);
+    private void packetOut(PacketContext context, PortNumber portNumber) {
         context.treatmentBuilder().setOutput(portNumber);
         context.send();
     }
 
-    // Floods the specified packet if permissible.
-    private void flood(PacketContext context, ReactiveForwardMetrics macMetrics) {
-        if (topologyService.isBroadcastPoint(topologyService.currentTopology(),
-                context.inPacket().receivedFrom())) {
-            packetOut(context, PortNumber.FLOOD, macMetrics);
-        } else {
-            context.block();
-        }
-    }
 
     // Indicated whether this is an IPv6 multicast packet.
     private boolean isIpv6Multicast(Ethernet eth) {
         return eth.getEtherType() == Ethernet.TYPE_IPV6 && eth.isMulticast();
-    }
-
-
-    private void droppedPacket(ReactiveForwardMetrics macmetrics) {
-        if (recordMetrics) {
-            macmetrics.incrementDroppedPacket();
-            metrics.put(macmetrics.getMacAddress(), macmetrics);
-        }
     }
 
     // Indicates whether this is a control packet, e.g. LLDP, BDDP
@@ -1016,34 +986,18 @@ public class AppComponent {
         return type == Ethernet.TYPE_LLDP || type == Ethernet.TYPE_BSN;
     }
 
-    private void inPacket(ReactiveForwardMetrics macmetrics) {
-        if (recordMetrics) {
-            macmetrics.incrementInPacket();
-            metrics.put(macmetrics.getMacAddress(), macmetrics);
-        }
+
+    public void hostRouteToNat(Deque<Integer> path, int flowPriority) {
+        hostRouteToNat(path, null, flowPriority);
     }
 
-    private ReactiveForwardMetrics createCounter(MacAddress macAddress) {
-        ReactiveForwardMetrics macMetrics = null;
-        if (recordMetrics) {
-            macMetrics = metrics.compute(macAddress, (key, existingValue) -> {
-                if (existingValue == null) {
-                    return new ReactiveForwardMetrics(0L, 0L, 0L, 0L, macAddress);
-                } else {
-                    return existingValue;
-                }
-            });
-        }
-        return macMetrics;
-    }
-
-
-    public void hostRouteToNat() {
+    public void hostRouteToNat(Deque<Integer> path, IpPrefix ipPrefix, int flowPriority) {
         TopologyDesc topo = TopologyDesc.getInstance();
         List<Integer> routing = new ArrayList<>();
-        routing.add(9);
-        routing.add(11);
-        routing.add(0);
+        int size = path.size();
+        for(int i = 0; i < size; i++) {
+            routing.add(path.pollFirst());
+        }
         for(int j=0;j<routing.size()-1;j++){
             int curr=routing.get(j);
             int next=routing.get(j+1);
@@ -1057,8 +1011,12 @@ public class AppComponent {
             }
             FlowTableEntry entry=new FlowTableEntry();
             entry.setDeviceId(currDeviceId)
-                    .setPriority(FlowEntryPriority.NAT_DEFAULT_ROUTING)
+                    .setPriority(flowPriority)
                     .setTable(0);
+            if(ipPrefix != null) {
+                entry.filter()
+                        .setDstIP(ipPrefix);
+            }
             entry.action()
                     .setOutput(output);
             FlowRule rule = entry.install(flowRuleService);
@@ -1067,12 +1025,13 @@ public class AppComponent {
 
     }
 
-    public void natRouteToHost(MacAddress dstMac) {
+    public void natRouteToHost(Deque<Integer> path, MacAddress dstMac) {
         TopologyDesc topo = TopologyDesc.getInstance();
         List<Integer> routing = new ArrayList<>();
-        routing.add(0);
-        routing.add(11);
-        routing.add(9);
+        int size = path.size();
+        for(int i = 0; i < size; i++) {
+            routing.add(path.pollLast());
+        }
         for(int j=0;j<routing.size()-1;j++){
             int curr=routing.get(j);
             int next=routing.get(j+1);
@@ -1138,29 +1097,19 @@ public class AppComponent {
 
             Ethernet ethPkt = pkt.parsed();
 
-            logger.info("*********************************************");
-            logger.info(pkt.receivedFrom().toString());
-
             if (ethPkt == null) {
                 return;
             }
             //get source mac
             MacAddress macAddress = ethPkt.getSourceMAC();
 
-            ReactiveForwardMetrics macMetrics = null;
-            macMetrics = createCounter(macAddress);
-            inPacket(macMetrics);
-
-
             // Bail if this is deemed to be a control packet.
             if (isControlPacket(ethPkt)) {
-                droppedPacket(macMetrics);
                 return;
             }
 
             // Skip IPv6 multicast packet when IPv6 forward is disabled.
             if (!ipv6Forwarding && isIpv6Multicast(ethPkt)) {
-                droppedPacket(macMetrics);
                 return;
             }
 
@@ -1169,13 +1118,14 @@ public class AppComponent {
             // Do not process LLDP MAC address in any way.
             // do not process arp packet
             if (id.mac().isLldp()) {
-                droppedPacket(macMetrics);
+                logger.info(pkt.receivedFrom().toString());
                 logger.info("drop lldp packet");
                 return;
             }
 
             if(ethPkt.getEtherType() == Ethernet.TYPE_ARP) {
-                logger.info("drop arp packet");
+//                logger.info(pkt.receivedFrom().toString());
+//                logger.info("drop arp packet");
                 return;
             }
 
@@ -1186,65 +1136,25 @@ public class AppComponent {
                 }
             }
 
-
-            // Do we know who this is for? If not, flood and bail.
-          /*  Host dst = hostService.getHost(id);
-            if (dst == null) {
-                flood(context, macMetrics);
-                return;
-            }
-
-            // Are we on an edge switch that our destination is on? If so,
-            // simply forward out to the destination and bail.
-            if (pkt.receivedFrom().deviceId().equals(dst.location().deviceId())) {
-                if (!context.inPacket().receivedFrom().port().equals(dst.location().port())) {
-                    installRule(context, dst.location().port(), macMetrics);
-                }
-                return;
-            }*/
-            // Otherwise, get a set of paths that lead from here to the
-            // s0 wang guan
-            // destination edge switch.
             if(ethPkt.getEtherType() == Ethernet.TYPE_IPV4) {
+                logger.info("*********************************************");
+                logger.info(pkt.receivedFrom().toString());
                 logger.info("source mac addr:" + macAddress);
-                logger.info("install the routing");
+                logger.info("install the routing to gate");
                 DeviceId deviceId = pkt.receivedFrom().deviceId();
+                int srcId = TopologyDesc.getInstance().getDeviceIdx(deviceId);
+                logger.info("srcid:" + srcId);
                 PortNumber port = pkt.receivedFrom().port();
 
                 installFlowEndSwitchToHost(macAddress, deviceId, port);
-                natRouteToHost(macAddress);
-                natRouteToHost(MacAddress.valueOf("00:0c:29:d8:8e:96"));
-                hostRouteToNat();
+                Deque<Integer> dijkstraPath = Dijkstra(Env.graph, srcId, 0);
+                logger.info(dijkstraPath.toString());
+                natRouteToHost(new LinkedList<>(dijkstraPath), macAddress);
+                hostRouteToNat(new LinkedList<>(dijkstraPath), IpPrefix.valueOf("192.168.1.136/24"), FlowEntryPriority.NAT_DEFAULT_ROUTING);
             }
-
-
-            /*Set<Path> paths =
-                    topologyService.getPaths(topologyService.currentTopology(),
-                            pkt.receivedFrom().deviceId(),
-                            TopologyDesc.getInstance().getDeviceId(0));
-            if (paths.isEmpty()) {
-                // If there are no paths, flood and bail.
-                flood(context, macMetrics);
-                return;
-            }
-
-            // Otherwise, pick a path that does not lead back to where we
-            // came from; if no such path, flood and bail.
-            Path path = pickForwardPathIfPossible(paths, pkt.receivedFrom().port());
-            if (path == null) {
-                logger.warn("Don't know where to go from here {} for {} -> {}",
-                        pkt.receivedFrom(), ethPkt.getSourceMAC(), "s0");
-                flood(context, macMetrics);
-                return;
-            }
-
-            // Otherwise forward and be done with it.
-            installRule(context, path.src().port(), macMetrics);*/
         }
 
     }
 }
-
-
 
 

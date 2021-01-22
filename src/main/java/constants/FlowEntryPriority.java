@@ -22,6 +22,7 @@ public class FlowEntryPriority {
     public static final int TABLE2_DROP=40000;
 
     public static final int NAT_DEFAULT_ROUTING=50000;
+    public static final int INTERNET_ROUTING=48000;
 
 
 }

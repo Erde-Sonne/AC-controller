@@ -1053,7 +1053,7 @@ public class AppComponent {
             }
             FlowTableEntry entry=new FlowTableEntry();
             entry.setDeviceId(currDeviceId)
-                    .setPriority(flowPriority)
+                    .setPriority(FlowEntryPriority.RESOURCE_DEFAULT_ROUTING)
                     .setTable(0);
 
             entry.filter()
@@ -1061,6 +1061,7 @@ public class AppComponent {
 
             entry.action()
                     .setOutput(output);
+            entry.setTimeout(60);
             FlowRule rule = entry.install(flowRuleService);
             defaultFlowRulesCache.add(rule);
         }
@@ -1089,12 +1090,13 @@ public class AppComponent {
             }
             FlowTableEntry entry=new FlowTableEntry();
             entry.setDeviceId(currDeviceId)
-                    .setPriority(FlowEntryPriority.NAT_DEFAULT_ROUTING)
+                    .setPriority(FlowEntryPriority.RESOURCE_DEFAULT_ROUTING)
                     .setTable(0);
             entry.filter()
                     .setSrcIP(IpPrefix.valueOf("10.0.0." + (dst + 1) + "/32"));
             entry.action()
                     .setOutput(output);
+            entry.setTimeout(60);
             FlowRule rule = entry.install(flowRuleService);
             defaultFlowRulesCache.add(rule);
         }

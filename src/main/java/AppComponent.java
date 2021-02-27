@@ -1230,7 +1230,8 @@ public class AppComponent {
                 Deque<Integer> dijkstraPath = Dijkstra(Env.graph, srcId, 0);
                 logger.info(dijkstraPath.toString());
                 natRouteToHost(new LinkedList<>(dijkstraPath), macAddress);
-                hostRouteToNat(new LinkedList<>(dijkstraPath), IpPrefix.valueOf("192.168.1.163/24"), FlowEntryPriority.NAT_DEFAULT_ROUTING);
+                hostRouteToNat(new LinkedList<>(dijkstraPath), FlowEntryPriority.NAT_DEFAULT_ROUTING);
+//                hostRouteToNat(new LinkedList<>(dijkstraPath), IpPrefix.valueOf("192.168.1.163/24"), FlowEntryPriority.NAT_DEFAULT_ROUTING);
             }
         }
 

@@ -254,6 +254,7 @@ public class FlowTableEntry {
 
         ruleBuilder.withSelector(selectorBuilder.build())
                 .withTreatment(trafficBuilder.build())
+                .withReason(FlowRule.FlowRemoveReason.IDLE_TIMEOUT)
                 .withPriority(priority)
                 .forTable(table)
                 .fromApp(App.appId);

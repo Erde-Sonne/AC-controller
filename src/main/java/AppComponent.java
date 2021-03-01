@@ -21,6 +21,7 @@ import apps.smartfwd.src.main.java.constants.FlowEntryTimeout;
 import apps.smartfwd.src.main.java.constants.Env;
 import apps.smartfwd.src.main.java.models.SwitchPair;
 import apps.smartfwd.src.main.java.task.*;
+import apps.smartfwd.src.main.java.utils.Simulation;
 import com.eclipsesource.json.JsonArray;
 import com.eclipsesource.json.JsonObject;
 import com.fasterxml.jackson.core.JsonProcessingException;
@@ -34,15 +35,14 @@ import org.onosproject.net.*;
 import org.onosproject.net.device.DeviceService;
 import org.onosproject.net.edge.EdgePortService;
 import org.onosproject.net.flow.*;
-import org.onosproject.net.flowobjective.DefaultForwardingObjective;
 import org.onosproject.net.flowobjective.FlowObjectiveService;
-import org.onosproject.net.flowobjective.ForwardingObjective;
 import org.onosproject.net.group.GroupService;
 import org.onosproject.net.host.HostService;
 import org.onosproject.net.packet.InboundPacket;
 import org.onosproject.net.packet.PacketContext;
 import org.onosproject.net.packet.PacketPriority;
 import org.onosproject.net.packet.PacketProcessor;
+import org.onosproject.net.packet.PacketRequest;
 import org.onosproject.net.packet.PacketService;
 import org.onosproject.net.statistic.PortStatisticsService;
 import org.onosproject.net.topology.Topology;
@@ -61,15 +61,13 @@ import java.io.BufferedWriter;
 import java.io.File;
 import java.io.FileWriter;
 import java.io.IOException;
-import java.net.InetSocketAddress;
-import java.nio.ByteBuffer;
-import java.nio.channels.SocketChannel;
 import java.text.SimpleDateFormat;
 import java.util.*;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static apps.smartfwd.src.main.java.TopologyDesc.INVALID_PORT;
+import static apps.smartfwd.src.main.java.task.SocketClientTask.sendPost;
 
 
 /**
@@ -107,6 +105,7 @@ public class AppComponent {
     protected GroupService groupService;
 
     BlockingQueue<FlowTableEntry> flowEntries=new LinkedBlockingQueue<>();
+    HashSet<MacAddress> macAddrSet = new HashSet<>();
 
     FlowEntryTask flowEntryTask;
     SocketServerTask classifierServer;
@@ -254,6 +253,26 @@ public class AppComponent {
     };
     AtomicReference<List<Map<SwitchPair,Long>>>  collectedStats=new AtomicReference<>();
     AtomicReference<Map<SwitchPair,Long>> portRate=new AtomicReference<>();
+    AtomicReference<Map<String,List<Map<String, String>>>> flowStatics = new AtomicReference<>();
+    FlowStaticsCollector.Handler flowStaticsCollectorHandler = new FlowStaticsCollector.Handler() {
+        @Override
+        public void handle(Map<String,List<Map<String, String>>> stats) {
+            flowStatics.set(stats);
+            logger.info(stats.toString());
+            ObjectMapper mapper = new ObjectMapper();
+            try {
+                String valueAsString = mapper.writeValueAsString(stats);
+                String param = "data=" + valueAsString;
+                logger.info(param);
+                String sr= sendPost("http://192.168.1.136:8888/data/postData", param);
+                logger.info(sr);
+            } catch (JsonProcessingException e) {
+                e.printStackTrace();
+            }
+        }
+    };
+    FlowStaticsCollector flowStaticsCollector;
+
 
     TrafficMatrixCollector.Handler trafficMatrixCollectorHandler=new TrafficMatrixCollector.Handler() {
         @Override
@@ -459,10 +478,15 @@ public class AppComponent {
         ObjectMapper mapper=new ObjectMapper();
         try {
             JsonNode dataJson=mapper.readTree(payload);
+            if(dataJson == null) {
+                logger.info("the json format error");
+            }
+            assert dataJson != null;
+            String mac = dataJson.get("mac").asText();
             int status = dataJson.get("status").asInt();
-            int toInternet = dataJson.get("toInternet").asInt();
+//            int toInternet = dataJson.get("toInternet").asInt();
             int hostId = dataJson.get("hostId").asInt();
-            logger.info("status:" + status + " toInternet:" + toInternet + " hostId:" + hostId);
+            logger.info("the mac address is -> " + mac);
             if(status == 1) {
                 JsonNode node = dataJson.get("dstIds");
                 if(node.isArray()) {
@@ -474,18 +498,30 @@ public class AppComponent {
                         //计算出到资源服务器的路径
                         Deque<Integer> path = Dijkstra(Env.graph, hostId, dst);
                         logger.info(path.toString());
-                        hostRouteToDst(new LinkedList<>(path));
-                        dstRouteToHost(new LinkedList<>(path));
+                        hostRouteToDst(new LinkedList<>(path), mac);
+                        dstRouteToHost(new LinkedList<>(path), mac);
+                        logger.info("you can visit the source server" + dst);
                     }
 
                 }
+
+            } else if (status == 2) {
+                logger.info("----------reading set internet------------");
+                Deque<Integer> dijkstraPath = Dijkstra(Env.graph, hostId, 0);
+                logger.info(dijkstraPath.toString());
+                natRouteToHost(new LinkedList<>(dijkstraPath),
+                        mac, FlowEntryPriority.RESOURCE_DEFAULT_ROUTING - 1, 2);
+                hostRouteToNat(new LinkedList<>(dijkstraPath), null,
+                        FlowEntryPriority.RESOURCE_DEFAULT_ROUTING - 1, 2, mac);
+                logger.info("can surf the Internet");
+
             }
-            if(toInternet == 1) {
-                //允许host连接外网
-                logger.info("hostId:" + hostId + "can be connected to Internet");
-                Deque<Integer> path = Dijkstra(Env.graph, hostId, 0);
-                hostRouteToNat(path, FlowEntryPriority.INTERNET_ROUTING);
-            }
+//            if(toInternet == 1) {
+//                //允许host连接外网
+//                logger.info("hostId:" + hostId + "can be connected to Internet");
+//                Deque<Integer> path = Dijkstra(Env.graph, hostId, 0);
+//                hostRouteToNat(path, FlowEntryPriority.INTERNET_ROUTING);
+//            }
 
         } catch (JsonProcessingException e) {
             e.printStackTrace();
@@ -507,11 +543,17 @@ public class AppComponent {
         logger.info("Init static flow table");
         init();
         packetService.addProcessor(processor, PacketProcessor.director(1));
+
         requestIntercepts();
 
         listenWebServerTask = new SocketServerTask(App.WEB_LISTENING_IP, App.WEB_LISTENING_PORT, listenWebHandler);
         listenWebServerTask.start();
         logger.info("listen web socket started");
+
+        flowStaticsCollector = new FlowStaticsCollector(flowRuleService, TopologyDesc.getInstance(), flowStaticsCollectorHandler);
+        flowStaticsCollector.setInterval(20);
+        flowStaticsCollector.start();
+        logger.info("flowStatics started");
 
         //start flow entry install worker
 //        logger.info("Start Flow entry installation worker");
@@ -993,11 +1035,19 @@ public class AppComponent {
     }
 
 
-    public void hostRouteToNat(Deque<Integer> path, int flowPriority) {
-        hostRouteToNat(path, null, flowPriority);
+    public void sendMsgToServer(String req) {
+        SocketClientTask.ResponseHandler responseHandler = payload -> {
+            logger.info(payload);
+        };
+        SocketClientTask task=new SocketClientTask(req, responseHandler,App.Server_IP,App.Server_PORT);
+        task.start();
     }
 
-    public void hostRouteToNat(Deque<Integer> path, IpPrefix ipPrefix, int flowPriority) {
+    public void hostRouteToNat(Deque<Integer> path, int flowPriority) {
+        hostRouteToNat(path, null, flowPriority, 1, null);
+    }
+
+    public void hostRouteToNat(Deque<Integer> path, IpPrefix ipPrefix, int flowPriority, int mode, String mac) {
         TopologyDesc topo = TopologyDesc.getInstance();
         List<Integer> routing = new ArrayList<>();
         int size = path.size();
@@ -1025,6 +1075,11 @@ public class AppComponent {
             }
             entry.action()
                     .setOutput(output);
+            if(mode == 2) {
+                entry.setTimeout(60);
+                entry.filter()
+                        .setSrcMac(MacAddress.valueOf(mac));
+            }
             FlowRule rule = entry.install(flowRuleService);
             defaultFlowRulesCache.add(rule);
         }
@@ -1032,7 +1087,7 @@ public class AppComponent {
     }
 
 
-    public void hostRouteToDst(Deque<Integer> path) {
+    public void hostRouteToDst(Deque<Integer> path, String mac) {
         TopologyDesc topo = TopologyDesc.getInstance();
         List<Integer> routing = new ArrayList<>();
         int size = path.size();
@@ -1057,6 +1112,7 @@ public class AppComponent {
                     .setTable(0);
 
             entry.filter()
+                    .setSrcMac(MacAddress.valueOf(mac))
                     .setDstIP(IpPrefix.valueOf("10.0.0." + (dst + 1) + "/32"));
 
             entry.action()
@@ -1068,7 +1124,7 @@ public class AppComponent {
 
     }
 
-    public void dstRouteToHost(Deque<Integer> path) {
+    public void dstRouteToHost(Deque<Integer> path, String mac) {
         TopologyDesc topo = TopologyDesc.getInstance();
         List<Integer> routing = new ArrayList<>();
         int size = path.size();
@@ -1093,6 +1149,7 @@ public class AppComponent {
                     .setPriority(FlowEntryPriority.RESOURCE_DEFAULT_ROUTING)
                     .setTable(0);
             entry.filter()
+                    .setDstMac(MacAddress.valueOf(mac))
                     .setSrcIP(IpPrefix.valueOf("10.0.0." + (dst + 1) + "/32"));
             entry.action()
                     .setOutput(output);
@@ -1105,7 +1162,7 @@ public class AppComponent {
 
 
 
-    public void natRouteToHost(Deque<Integer> path, MacAddress dstMac) {
+    public void natRouteToHost(Deque<Integer> path, String dstMac, int flowPriority, int mode) {
         TopologyDesc topo = TopologyDesc.getInstance();
         List<Integer> routing = new ArrayList<>();
         int size = path.size();
@@ -1125,12 +1182,15 @@ public class AppComponent {
             }
             FlowTableEntry entry=new FlowTableEntry();
             entry.setDeviceId(currDeviceId)
-                    .setPriority(FlowEntryPriority.NAT_DEFAULT_ROUTING)
+                    .setPriority(flowPriority)
                     .setTable(0);
             entry.filter()
-                    .setDstMac(dstMac);
+                    .setDstMac(MacAddress.valueOf(dstMac));
             entry.action()
                     .setOutput(output);
+            if(mode == 2) {
+                entry.setTimeout(60);
+            }
             FlowRule rule = entry.install(flowRuleService);
             defaultFlowRulesCache.add(rule);
         }
@@ -1183,6 +1243,10 @@ public class AppComponent {
             //get source mac
             MacAddress macAddress = ethPkt.getSourceMAC();
 
+            //if mac black set return
+            if (Simulation.blackMacSet.contains(macAddress.toString())) {
+                return;
+            }
             // Bail if this is deemed to be a control packet.
             if (isControlPacket(ethPkt)) {
                 return;
@@ -1215,27 +1279,39 @@ public class AppComponent {
                     return;
                 }
             }
-
             if(ethPkt.getEtherType() == Ethernet.TYPE_IPV4) {
                 logger.info("*********************************************");
                 logger.info(pkt.receivedFrom().toString());
-                logger.info("source mac addr:" + macAddress);
-                logger.info("install the routing to gate");
-                DeviceId deviceId = pkt.receivedFrom().deviceId();
-                int srcId = TopologyDesc.getInstance().getDeviceIdx(deviceId);
-                logger.info("srcid:" + srcId);
-                PortNumber port = pkt.receivedFrom().port();
+                //第一次packetIn会默认配置到网关的路由
+                if(!macAddrSet.contains(macAddress)) {
+                    logger.info("source mac addr:" + macAddress);
+                    logger.info("install the routing to gate");
+                    DeviceId deviceId = pkt.receivedFrom().deviceId();
+                    int srcId = TopologyDesc.getInstance().getDeviceIdx(deviceId);
+                    logger.info("srcid:" + srcId);
+                    PortNumber port = pkt.receivedFrom().port();
 
-                installFlowEndSwitchToHost(macAddress, deviceId, port);
-                Deque<Integer> dijkstraPath = Dijkstra(Env.graph, srcId, 0);
-                logger.info(dijkstraPath.toString());
-                natRouteToHost(new LinkedList<>(dijkstraPath), macAddress);
-                hostRouteToNat(new LinkedList<>(dijkstraPath), FlowEntryPriority.NAT_DEFAULT_ROUTING);
-//                hostRouteToNat(new LinkedList<>(dijkstraPath), IpPrefix.valueOf("192.168.1.163/24"), FlowEntryPriority.NAT_DEFAULT_ROUTING);
+                    installFlowEndSwitchToHost(macAddress, deviceId, port);
+                    Deque<Integer> dijkstraPath = Dijkstra(Env.graph, srcId, 0);
+                    logger.info(dijkstraPath.toString());
+                    natRouteToHost(new LinkedList<>(dijkstraPath), macAddress.toString(),FlowEntryPriority.NAT_DEFAULT_ROUTING, 1);
+//                hostRouteToNat(new LinkedList<>(dijkstraPath), FlowEntryPriority.NAT_DEFAULT_ROUTING);
+                    hostRouteToNat(new LinkedList<>(dijkstraPath), IpPrefix.valueOf("192.168.1.136/24"), FlowEntryPriority.NAT_DEFAULT_ROUTING, 1, null);
+                    macAddrSet.add(macAddress);
+                }
+
+                MacAddress destinationMAC = ethPkt.getDestinationMAC();
+                DeviceId deviceId = pkt.receivedFrom().deviceId();
+                int deviceIdx = TopologyDesc.getInstance().getDeviceIdx(deviceId);
+                String param = "src=" + macAddress + "&dst=" + destinationMAC + "&switcher=" + deviceIdx;
+                logger.info(param);
+                String sr= sendPost("http://192.168.1.136:8888/user/verifyByMac", param);
+                logger.info(sr);
             }
         }
 
     }
+
 }
 
 

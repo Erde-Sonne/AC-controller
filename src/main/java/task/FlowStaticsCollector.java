@@ -12,6 +12,8 @@ import org.onosproject.net.flow.TrafficSelector;
 import org.onosproject.net.flow.criteria.Criterion;
 import org.onosproject.net.flow.criteria.EthCriterion;
 import org.onosproject.net.flow.criteria.IPCriterion;
+import org.onosproject.net.flow.criteria.IPProtocolCriterion;
+import org.onosproject.net.flow.criteria.TcpPortCriterion;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -20,6 +22,7 @@ import java.util.Date;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 public class FlowStaticsCollector extends PeriodicalTask {
     public interface Handler{
@@ -28,20 +31,23 @@ public class FlowStaticsCollector extends PeriodicalTask {
 
     TopologyDesc desc;
     Handler handler;
+    int[] deviceIds;
     Map<String, List<Map<String, String>>> currStats=new HashMap<>();
     FlowRuleService flowRuleService;
     private final Logger logger= LoggerFactory.getLogger(getClass().getName());
-    public FlowStaticsCollector(FlowRuleService flowRuleService, TopologyDesc topo, Handler handler){
+    public FlowStaticsCollector(FlowRuleService flowRuleService, TopologyDesc topo,
+                                int[] deviceIds,  Handler handler){
         this.desc=topo;
         this.handler=handler;
         this.flowRuleService=flowRuleService;
+        this.deviceIds = deviceIds;
 
         this.worker=()->{
 
-            for(DeviceId srcId:topo.getDeviceIds()){
+            for(int srcId:this.deviceIds){
                 //init
                 List<Map<String, String>> res=new ArrayList<>();
-                for(FlowEntry entry:flowRuleService.getFlowEntries(srcId)){
+                for(FlowEntry entry:flowRuleService.getFlowEntries(topo.getDeviceId(srcId))){
                     if(!entry.table().equals(IndexTableId.of(0))) continue;
                     if(entry.priority()!= FlowEntryPriority.RESOURCE_DEFAULT_ROUTING) continue;
 
@@ -50,6 +56,10 @@ public class FlowStaticsCollector extends PeriodicalTask {
                     IPCriterion srcCriterion=(IPCriterion) selector.getCriterion(Criterion.Type.IPV4_SRC);
                     EthCriterion srcMACcriterion = (EthCriterion) selector.getCriterion(Criterion.Type.ETH_SRC);
                     EthCriterion dstMACcriterion = (EthCriterion) selector.getCriterion(Criterion.Type.ETH_DST);
+                    IPProtocolCriterion protocolCriterion = (IPProtocolCriterion) selector.getCriterion(Criterion.Type.IP_PROTO);
+                    TcpPortCriterion srcPortCriterion = (TcpPortCriterion) selector.getCriterion(Criterion.Type.TCP_SRC);
+                    TcpPortCriterion dstPortCriterion = (TcpPortCriterion) selector.getCriterion(Criterion.Type.TCP_DST);
+
                     long time = new Date().getTime();
                     long packets = entry.packets();
                     long bytes = entry.bytes();
@@ -59,6 +69,9 @@ public class FlowStaticsCollector extends PeriodicalTask {
                     String dstIP = "";
                     String srcMAC = "";
                     String dstMAC = "";
+                    String srcPort = "";
+                    String dstPort = "";
+                    String protocol = "";
                     if (srcCriterion != null) {
                         srcIP = srcCriterion.ip().toString();
                     }
@@ -71,6 +84,15 @@ public class FlowStaticsCollector extends PeriodicalTask {
                     if (dstMACcriterion != null) {
                         dstMAC = dstMACcriterion.mac().toString();
                     }
+                    if (srcPortCriterion != null) {
+                        srcPort = srcPortCriterion.tcpPort().toString();
+                    }
+                    if (dstPortCriterion != null) {
+                        dstPort = dstPortCriterion.tcpPort().toString();
+                    }
+                    if (protocolCriterion != null) {
+                        protocol = String.valueOf(protocolCriterion.protocol());
+                    }
                     Map<String, String> map = new HashMap<>();
                     map.put("time", String.valueOf(time));
                     map.put("packets", String.valueOf(packets));
@@ -80,12 +102,13 @@ public class FlowStaticsCollector extends PeriodicalTask {
                     map.put("srcMAC", srcMAC);
                     map.put("dstIP", dstIP);
                     map.put("dstMAC", dstMAC);
-//                    String statics = String.format("{\"time\":%s,\"srcIP\":\"%s\", \"srcMAC\":\"%s\", " +
-//                            "\"dstIP\":\"%s\", \"dstMAC\":\"%s\", \"packets\":%s, \"bytes\":%s, \"life\":%s}",
-//                            time, srcIP, srcMAC, dstIP, dstMAC, packets, bytes, life);
+                    map.put("srcPort", srcPort);
+                    map.put("dstPort", dstPort);
+                    map.put("protocol", protocol);
+
                     res.add(map);
                 }
-                currStats.put(String.valueOf(topo.getDeviceIdx(srcId)), res);
+                currStats.put(String.valueOf(srcId), res);
             }
             handler.handle(currStats);
         };

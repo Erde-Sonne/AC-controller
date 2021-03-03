@@ -106,6 +106,7 @@ public class AppComponent {
 
     BlockingQueue<FlowTableEntry> flowEntries=new LinkedBlockingQueue<>();
     HashSet<MacAddress> macAddrSet = new HashSet<>();
+    Set<String> localIpSet = Simulation.localIpSet;
 
     FlowEntryTask flowEntryTask;
     SocketServerTask classifierServer;
@@ -482,40 +483,53 @@ public class AppComponent {
                 logger.info("the json format error");
             }
             assert dataJson != null;
-            String mac = dataJson.get("mac").asText();
-            int status = dataJson.get("status").asInt();
-//            int toInternet = dataJson.get("toInternet").asInt();
-            int hostId = dataJson.get("hostId").asInt();
-            logger.info("the mac address is -> " + mac);
-            if(status == 1) {
-                JsonNode node = dataJson.get("dstIds");
-                if(node.isArray()) {
-                    int size = node.size();
-                    for(int i = 0; i < size; i++) {
-                        int dst = node.get(i).asInt();
-                        //安装到host的流表
-                        installFlowEntryToEndSwitch(dst);
-                        //计算出到资源服务器的路径
-                        Deque<Integer> path = Dijkstra(Env.graph, hostId, dst);
-                        logger.info(path.toString());
-                        hostRouteToDst(new LinkedList<>(path), mac);
-                        dstRouteToHost(new LinkedList<>(path), mac);
-                        logger.info("you can visit the source server" + dst);
-                    }
-
-                }
-
-            } else if (status == 2) {
-                logger.info("----------reading set internet------------");
-                Deque<Integer> dijkstraPath = Dijkstra(Env.graph, hostId, 0);
-                logger.info(dijkstraPath.toString());
-                natRouteToHost(new LinkedList<>(dijkstraPath),
-                        mac, FlowEntryPriority.RESOURCE_DEFAULT_ROUTING - 1, 2);
-                hostRouteToNat(new LinkedList<>(dijkstraPath), null,
-                        FlowEntryPriority.RESOURCE_DEFAULT_ROUTING - 1, 2, mac);
-                logger.info("can surf the Internet");
-
+            String srcMac = dataJson.get("srcMac").asText();
+            String dstIP = dataJson.get("dstIP").asText();
+            String switcher = dataJson.get("switcher").asText();
+            String srcPort = dataJson.get("srcPort").asText();
+            String dstPort = dataJson.get("dstPort").asText();
+            String protocol = dataJson.get("protocol").asText();
+            logger.info("the mac address is -> " + srcMac  + "the dst IP is ->" + dstIP);
+            Deque<Integer> path = null;
+            if (localIpSet.contains(dstIP)) {
+                String[] split = dstIP.split("10.0.0.");
+                logger.info("dst source id is: " + split[1]);
+                //安装到host的流表
+                installFlowEntryToEndSwitch(Integer.parseInt(split[1]) - 1, dstIP);
+                //计算出到资源服务器的路径
+                path = Dijkstra(Env.graph, Integer.parseInt(switcher), Integer.parseInt(split[1]) - 1);
+            } else {
+                path = Dijkstra(Env.graph, Integer.parseInt(switcher), 0);
             }
+            logger.info(path.toString());
+            hostRouteToDst(new LinkedList<>(path), srcMac, dstIP,
+                    srcPort, dstPort, protocol);
+            dstRouteToHost(new LinkedList<>(path), srcMac, dstIP,
+                    srcPort, dstPort, protocol);
+            logger.info("you can visit the source server" + dstIP);
+
+//            if(status == 1) {
+//                JsonNode node = dataJson.get("dstIds");
+//                if(node.isArray()) {
+//                    int size = node.size();
+//                    for(int i = 0; i < size; i++) {
+//                        int dst = node.get(i).asInt();
+//
+//                    }
+//
+//                }
+//
+//            } else if (status == 2) {
+//                logger.info("----------reading set internet------------");
+//                Deque<Integer> dijkstraPath = Dijkstra(Env.graph, hostId, 0);
+//                logger.info(dijkstraPath.toString());
+//                natRouteToHost(new LinkedList<>(dijkstraPath),
+//                        mac, FlowEntryPriority.RESOURCE_DEFAULT_ROUTING - 1, 2);
+//                hostRouteToNat(new LinkedList<>(dijkstraPath), null,
+//                        FlowEntryPriority.RESOURCE_DEFAULT_ROUTING - 1, 2, mac);
+//                logger.info("can surf the Internet");
+//
+//            }
 //            if(toInternet == 1) {
 //                //允许host连接外网
 //                logger.info("hostId:" + hostId + "can be connected to Internet");
@@ -549,8 +563,9 @@ public class AppComponent {
         listenWebServerTask = new SocketServerTask(App.WEB_LISTENING_IP, App.WEB_LISTENING_PORT, listenWebHandler);
         listenWebServerTask.start();
         logger.info("listen web socket started");
-
-        flowStaticsCollector = new FlowStaticsCollector(flowRuleService, TopologyDesc.getInstance(), flowStaticsCollectorHandler);
+        //只收集入口交换机上的流表
+        flowStaticsCollector = new FlowStaticsCollector(flowRuleService, TopologyDesc.getInstance(),
+                new int[]{9}, flowStaticsCollectorHandler);
         flowStaticsCollector.setInterval(20);
         flowStaticsCollector.start();
         logger.info("flowStatics started");
@@ -627,7 +642,7 @@ public class AppComponent {
 //        getMatrixMission();
     }
 
-    void installFlowEntryToEndSwitch(int endSwitchId) {
+    void installFlowEntryToEndSwitch(int endSwitchId, String dstIP) {
 //        for(Device device:deviceService.getAvailableDevices()){
 //            for(Host host:hostService.getConnectedHosts(device.id())) {
 //                for(IpAddress ipAddr:host.ipAddresses()){
@@ -638,7 +653,7 @@ public class AppComponent {
                             .setPriority(FlowEntryPriority.TABLE0_HANDLE_LAST_HOP)
                             .setDeviceId(TopologyDesc.getInstance().getDeviceId(endSwitchId));
                     entry.filter()
-                            .setDstIP(IpPrefix.valueOf("10.0.0." + (endSwitchId + 1) + "/32"));
+                            .setDstIP(IpPrefix.valueOf(dstIP + "/32"));
                     entry.action()
                             .setOutput(PortNumber.portNumber("1"));
                     entry.install(flowRuleService);
@@ -1087,7 +1102,8 @@ public class AppComponent {
     }
 
 
-    public void hostRouteToDst(Deque<Integer> path, String mac) {
+    public void hostRouteToDst(Deque<Integer> path, String srcMac, String dstIP,
+                               String srcPort, String dstPort, String protocol) {
         TopologyDesc topo = TopologyDesc.getInstance();
         List<Integer> routing = new ArrayList<>();
         int size = path.size();
@@ -1112,8 +1128,15 @@ public class AppComponent {
                     .setTable(0);
 
             entry.filter()
-                    .setSrcMac(MacAddress.valueOf(mac))
-                    .setDstIP(IpPrefix.valueOf("10.0.0." + (dst + 1) + "/32"));
+                    .setSrcMac(MacAddress.valueOf(srcMac))
+                    .setDstIP(IpPrefix.valueOf(dstIP + "/32"))
+                    .setProtocol(Byte.parseByte(protocol));
+
+            if(Integer.parseInt(srcPort) != 0 && Byte.parseByte(protocol) == IPv4.PROTOCOL_TCP) {
+            entry.filter()
+                    .setSport(Integer.parseInt(srcPort))
+                    .setDstPort(Integer.parseInt(dstPort));
+            }
 
             entry.action()
                     .setOutput(output);
@@ -1124,7 +1147,8 @@ public class AppComponent {
 
     }
 
-    public void dstRouteToHost(Deque<Integer> path, String mac) {
+    public void dstRouteToHost(Deque<Integer> path, String srcMac, String dstIP,
+                               String srcPort, String dstPort, String protocol) {
         TopologyDesc topo = TopologyDesc.getInstance();
         List<Integer> routing = new ArrayList<>();
         int size = path.size();
@@ -1133,12 +1157,16 @@ public class AppComponent {
         }
         Integer dst = routing.get(0);
 
-        for(int j=0;j<routing.size()-1;j++){
+        for(int j=0;j<routing.size();j++){
             int curr=routing.get(j);
-            int next=routing.get(j+1);
+            int nextIndex = (j + 1) < routing.size() ? (j + 1) : j;
+            int next=routing.get(nextIndex);
             DeviceId currDeviceId=topo.getDeviceId(curr);
             DeviceId nextHopDeviceId=topo.getDeviceId(next);
-            PortNumber output=topo.getConnectionPort(currDeviceId,nextHopDeviceId);
+            PortNumber output = PortNumber.portNumber("2");
+            if (j != routing.size() - 1) {
+                output=topo.getConnectionPort(currDeviceId,nextHopDeviceId);
+            }
             if(output.equals(INVALID_PORT)){
                 logger.info("the adjacent switch port error");
                 continue;
@@ -1149,8 +1177,16 @@ public class AppComponent {
                     .setPriority(FlowEntryPriority.RESOURCE_DEFAULT_ROUTING)
                     .setTable(0);
             entry.filter()
-                    .setDstMac(MacAddress.valueOf(mac))
-                    .setSrcIP(IpPrefix.valueOf("10.0.0." + (dst + 1) + "/32"));
+                    .setDstMac(MacAddress.valueOf(srcMac))
+                    .setSrcIP(IpPrefix.valueOf(dstIP + "/32"))
+                    .setProtocol(Byte.parseByte(protocol));
+            if(Integer.parseInt(dstPort) != 0 && Byte.parseByte(protocol) == IPv4.PROTOCOL_TCP) {
+                entry.filter()
+                        .setSport(Integer.parseInt(dstPort))
+                        .setDstPort(Integer.parseInt(srcPort));
+            }
+
+
             entry.action()
                     .setOutput(output);
             entry.setTimeout(60);
@@ -1162,19 +1198,26 @@ public class AppComponent {
 
 
 
-    public void natRouteToHost(Deque<Integer> path, String dstMac, int flowPriority, int mode) {
+    public void natRouteToHost(Deque<Integer> path, String dstMac, int flowPriority, int mode, PortNumber lastPort) {
         TopologyDesc topo = TopologyDesc.getInstance();
         List<Integer> routing = new ArrayList<>();
         int size = path.size();
         for(int i = 0; i < size; i++) {
             routing.add(path.pollLast());
         }
-        for(int j=0;j<routing.size()-1;j++){
+        for(int j=0;j<routing.size();j++){
             int curr=routing.get(j);
-            int next=routing.get(j+1);
+            int nextIndex = (j + 1) < routing.size() ? (j + 1) : j;
+            int next=routing.get(nextIndex);
             DeviceId currDeviceId=topo.getDeviceId(curr);
             DeviceId nextHopDeviceId=topo.getDeviceId(next);
-            PortNumber output=topo.getConnectionPort(currDeviceId,nextHopDeviceId);
+            PortNumber output = PortNumber.portNumber("0");
+            if (j != routing.size() - 1) {
+                output=topo.getConnectionPort(currDeviceId,nextHopDeviceId);
+            } else {
+                output = lastPort;
+            }
+
             if(output.equals(INVALID_PORT)){
                 logger.info("the adjacent switch port error");
                 continue;
@@ -1257,19 +1300,18 @@ public class AppComponent {
                 return;
             }
 
-            HostId id = HostId.hostId(ethPkt.getDestinationMAC());
+            if(ethPkt.getEtherType() == Ethernet.TYPE_ARP) {
+//                logger.info(pkt.receivedFrom().toString());
+//                logger.info("drop arp packet");
+                return;
+            }
 
+            HostId id = HostId.hostId(ethPkt.getDestinationMAC());
             // Do not process LLDP MAC address in any way.
             // do not process arp packet
             if (id.mac().isLldp()) {
                 logger.info(pkt.receivedFrom().toString());
                 logger.info("drop lldp packet");
-                return;
-            }
-
-            if(ethPkt.getEtherType() == Ethernet.TYPE_ARP) {
-//                logger.info(pkt.receivedFrom().toString());
-//                logger.info("drop arp packet");
                 return;
             }
 
@@ -1279,7 +1321,57 @@ public class AppComponent {
                     return;
                 }
             }
-            if(ethPkt.getEtherType() == Ethernet.TYPE_IPV4) {
+
+            // 解析出包中的IP字段
+            IPv4 ipPayload = (IPv4) ethPkt.getPayload();
+            if(ipPayload != null) {
+                IpAddress srcIP = IpAddress.valueOf(ipPayload.getSourceAddress());
+                IpAddress dstIP = IpAddress.valueOf(ipPayload.getDestinationAddress());
+                byte protocol = ipPayload.getProtocol();
+                int srcPort = 0;
+                int dstPort = 0;
+                logger.info("srcIP:" + srcIP + "    dstIP:" + dstIP + "    protocol:" + protocol);
+                //第一次packetIn会默认配置到网关的路由
+                if(!macAddrSet.contains(macAddress)) {
+                    logger.info("source mac addr:" + macAddress);
+                    logger.info("install the routing to gate");
+                    DeviceId deviceId = pkt.receivedFrom().deviceId();
+                    int srcId = TopologyDesc.getInstance().getDeviceIdx(deviceId);
+                    logger.info("srcid:" + srcId);
+                    PortNumber port = pkt.receivedFrom().port();
+//                    installFlowEndSwitchToHost(macAddress, deviceId, port);
+                    Deque<Integer> dijkstraPath = Dijkstra(Env.graph, srcId, 0);
+                    logger.info(dijkstraPath.toString());
+                    natRouteToHost(new LinkedList<>(dijkstraPath), macAddress.toString(),FlowEntryPriority.NAT_DEFAULT_ROUTING, 1, port);
+//                hostRouteToNat(new LinkedList<>(dijkstraPath), FlowEntryPriority.NAT_DEFAULT_ROUTING);
+                    hostRouteToNat(new LinkedList<>(dijkstraPath), IpPrefix.valueOf("192.168.1.136/24"), FlowEntryPriority.NAT_DEFAULT_ROUTING, 1, null);
+                    macAddrSet.add(macAddress);
+                }
+
+                if (protocol == IPv4.PROTOCOL_ICMP) {
+                    logger.info("icmp  ping");
+                } else if(protocol == IPv4.PROTOCOL_TCP) {
+                    TCP tcpPayload =  (TCP) ipPayload.getPayload();
+                    srcPort = tcpPayload.getSourcePort();
+                    dstPort = tcpPayload.getDestinationPort();
+                } else if(protocol == IPv4.PROTOCOL_UDP) {
+                    UDP udpPayload =  (UDP) ipPayload.getPayload();
+                    srcPort = udpPayload.getSourcePort();
+                    dstPort = udpPayload.getDestinationPort();
+                }
+                DeviceId deviceId = pkt.receivedFrom().deviceId();
+                int deviceIdx = TopologyDesc.getInstance().getDeviceIdx(deviceId);
+                String param = "srcMac=" + macAddress.toString() + "&srcIP=" + srcIP + "&dstIP=" +
+                        dstIP.toString() + "&switcher=" + deviceIdx + "&srcPort=" + srcPort +
+                        "&dstPort=" + dstPort + "&protocol=" + protocol;
+                logger.info(param);
+                String sr= sendPost("http://192.168.1.136:8888/user/verifyByMac", param);
+                logger.info(sr);
+                return;
+            }
+            logger.info("other  packet in message");
+
+/*            if(ethPkt.getEtherType() == Ethernet.TYPE_IPV4) {
                 logger.info("*********************************************");
                 logger.info(pkt.receivedFrom().toString());
                 //第一次packetIn会默认配置到网关的路由
@@ -1307,7 +1399,7 @@ public class AppComponent {
                 logger.info(param);
                 String sr= sendPost("http://192.168.1.136:8888/user/verifyByMac", param);
                 logger.info(sr);
-            }
+            }*/
         }
 
     }

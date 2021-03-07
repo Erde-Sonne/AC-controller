@@ -37,14 +37,17 @@ public class App {
     public static final String OPT_ROUTING_IP="192.168.1.196";
     public static final int OPT_ROUTING_PORT=1053;
 
+    public static final String C_DOWN_ROUTING_IP="192.168.1.196";
+    public static final int C_DOWN_ROUTING_PORT=1053;
+
+
+
     public static final String WEB_LISTENING_IP="0.0.0.0";
     public static final int WEB_LISTENING_PORT=1060;
 
-    public static final String Server_IP="192.168.1.136";
+    public static final String Server_IP="192.168.1.49";
     public static final int Server_PORT=1061;
 
-    public static final String C_DOWN_ROUTING_IP="192.168.1.196";
-    public static final int C_DOWN_ROUTING_PORT=1053;
 
 }
 

@@ -265,7 +265,7 @@ public class AppComponent {
                 String valueAsString = mapper.writeValueAsString(stats);
                 String param = "data=" + valueAsString;
                 logger.info(param);
-                String sr= sendPost("http://192.168.1.136:8888/data/postData", param);
+                String sr= sendPost("http://" + App.Server_IP + ":8888/data/postData", param);
                 logger.info(sr);
             } catch (JsonProcessingException e) {
                 e.printStackTrace();
@@ -1344,7 +1344,7 @@ public class AppComponent {
                     logger.info(dijkstraPath.toString());
                     natRouteToHost(new LinkedList<>(dijkstraPath), macAddress.toString(),FlowEntryPriority.NAT_DEFAULT_ROUTING, 1, port);
 //                hostRouteToNat(new LinkedList<>(dijkstraPath), FlowEntryPriority.NAT_DEFAULT_ROUTING);
-                    hostRouteToNat(new LinkedList<>(dijkstraPath), IpPrefix.valueOf("192.168.1.136/24"), FlowEntryPriority.NAT_DEFAULT_ROUTING, 1, null);
+                    hostRouteToNat(new LinkedList<>(dijkstraPath), IpPrefix.valueOf("192.168.1.49/24"), FlowEntryPriority.NAT_DEFAULT_ROUTING, 1, null);
                     macAddrSet.add(macAddress);
                 }
 
@@ -1365,7 +1365,7 @@ public class AppComponent {
                         dstIP.toString() + "&switcher=" + deviceIdx + "&srcPort=" + srcPort +
                         "&dstPort=" + dstPort + "&protocol=" + protocol;
                 logger.info(param);
-                String sr= sendPost("http://192.168.1.136:8888/user/verifyByMac", param);
+                String sr= sendPost("http://" + App.Server_IP + ":8888/user/verifyByMac", param);
                 logger.info(sr);
                 return;
             }

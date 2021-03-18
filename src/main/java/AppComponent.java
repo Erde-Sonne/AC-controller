@@ -31,6 +31,7 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import org.onlab.packet.*;
 import org.onlab.util.KryoNamespace;
 import org.onosproject.core.CoreService;
+import org.onosproject.kafkaintegration.api.KafkaPublisherService;
 import org.onosproject.net.*;
 import org.onosproject.net.device.DeviceService;
 import org.onosproject.net.edge.EdgePortService;
@@ -274,6 +275,50 @@ public class AppComponent {
     };
     FlowStaticsCollector flowStaticsCollector;
 
+    /**
+     * TODO LIST
+     动态指标（单个交换机上）
+     1. 流的平均数据包数目
+     2. 流的最大数据包数目
+     3. 流的平均数据byte数目
+     4. 流的最大byte数目
+     5. 总流量大小
+     6. 流经过的流数目
+     7. 总流量的变化率
+     */
+    Map<String, Long> preSumBytesMap = new HashMap<>();
+    DynamicDataCollector.Handler dynamicDataCollectorHandler = new DynamicDataCollector.Handler() {
+        @Override
+        public void handle(Map<String, Map<String, long[]>> stats) {
+            Map<String, long[]> dynamicData = new HashMap<>();
+            for (String device : stats.keySet()) {
+                Map<String, long[]> deviceMap = stats.get(device);
+                Set<String> keySet = deviceMap.keySet();
+                long maxPackets = 0L;
+                long maxBytes = 0L;
+                long sumBytes = 0L;
+                long sumPackets = 0L;
+                int flowSize = keySet.size();
+                long preSumBytes = preSumBytesMap.getOrDefault(device, 0L);
+                for (String key : keySet) {
+                    long[] longs = deviceMap.get(key);
+                    sumPackets += longs[0];
+                    sumBytes += longs[1];
+                    maxPackets = Math.max(maxPackets, longs[0]);
+                    maxBytes = Math.max(maxBytes, longs[1]);
+                }
+                long averagePackets = flowSize == 0 ? 0 : sumPackets / flowSize;
+                long averageBytes = flowSize == 0 ? 0 : sumBytes / flowSize;
+                long changeRate = (sumBytes - preSumBytes) / 20;
+                preSumBytesMap.put(device, sumBytes);
+                dynamicData.put(device, new long[]{averagePackets, maxPackets, averageBytes,
+                        maxBytes, sumBytes, flowSize, changeRate});
+            }
+            logger.info(dynamicData.toString());
+        }
+    };
+    DynamicDataCollector dynamicDataCollector;
+
 
     TrafficMatrixCollector.Handler trafficMatrixCollectorHandler=new TrafficMatrixCollector.Handler() {
         @Override
@@ -501,6 +546,7 @@ public class AppComponent {
             } else {
                 path = Dijkstra(Env.graph, Integer.parseInt(switcher), 0);
             }
+
             logger.info(path.toString());
             hostRouteToDst(new LinkedList<>(path), srcMac, dstIP,
                     srcPort, dstPort, protocol);
@@ -570,36 +616,12 @@ public class AppComponent {
         flowStaticsCollector.start();
         logger.info("flowStatics started");
 
-        //start flow entry install worker
-//        logger.info("Start Flow entry installation worker");
-//        flowEntryTask=new FlowEntryTask(flowEntries,flowRuleService);
-//        flowEntryTask.start();
-//        logger.info("Flow entry installation worker started");
-////        //start flow classifier server;
-//        logger.info("Start socket server for flow classifier");
-//        classifierServer=new SocketServerTask(App.CLASSIFIER_LISTENING_IP, App.CLASSIFIER_LISTENING_PORT,classifierHandler);
-//        classifierServer.start();
-//        logger.info("Socket server for flow classifier started");
-
-//        logger.info("Topo changed idx server start");
-//        topoIdxServerTask = new SocketServerTask(App.TOPO_IDX_IP, App.TOPO_IDX_PORT, topoIdxHandler);
-//        topoIdxServerTask.start();
-
-////        //start traffic collector
-//        logger.info("Start traffic matrix collector");
-//        trafficMatrixCollector=new TrafficMatrixCollector(flowRuleService,TopologyDesc.getInstance(),trafficMatrixCollectorHandler);
-//        trafficMatrixCollector.start();
-//        logger.info("Traffic matrix collector started");
-//
-//        logger.info("Start Port Rate Collector");
-//        portRateCollector=new PortStatsCollectTask(portStatisticsService,topologyService,portRateConsumer);
-//        portRateCollector.start();
-//        logger.info("Port Rate collector start");
-
-//        optiCondition();
+        dynamicDataCollector = new DynamicDataCollector(flowRuleService, TopologyDesc.getInstance(), dynamicDataCollectorHandler);
+        dynamicDataCollector.setInterval(20);
+        dynamicDataCollector.start();
+        logger.info("dynamic data collect");
 
     }
-
     @Deactivate
     protected void deactivate() {
         App.getInstance().getPool().shutdownNow();

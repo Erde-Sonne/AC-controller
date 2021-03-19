@@ -1,6 +1,13 @@
 package apps.smartfwd.src.main.java.task;
 
 import apps.smartfwd.src.main.java.task.base.AbstractStoppableTask;
+import apps.smartfwd.src.main.java.utils.MQDict;
+import apps.smartfwd.src.main.java.utils.Producer;
+import org.apache.kafka.clients.producer.Callback;
+import org.apache.kafka.clients.producer.ProducerRecord;
+import org.apache.kafka.clients.producer.RecordMetadata;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.io.BufferedReader;
 import java.io.IOException;
@@ -17,6 +24,7 @@ public class SocketClientTask extends AbstractStoppableTask {
     public interface ResponseHandler {
         void handle(String response);
     }
+    private final Logger logger = LoggerFactory.getLogger(getClass());
     String payload;
     ResponseHandler responseHandler;
     String ip;
@@ -59,6 +67,24 @@ public class SocketClientTask extends AbstractStoppableTask {
         } catch (IOException e) {
             e.printStackTrace();
         }
+    }
+
+    /**
+     * 发送消息到kafka中
+     * @param topic
+     * @param data
+     */
+    public static void sendToKafka(String topic, String data) {
+        ProducerRecord<String , String> record = new ProducerRecord<String, String>(topic, data);
+        //发送消息
+        Producer.producer.send(record, new Callback() {
+            @Override
+            public void onCompletion(RecordMetadata recordMetadata, Exception e) {
+                if (null != e){
+                    e.printStackTrace();
+                }
+            }
+        });
     }
 
     /**

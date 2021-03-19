@@ -17,21 +17,20 @@ package apps.smartfwd.src.main.java;
 
 import apps.smartfwd.src.main.java.constants.App;
 import apps.smartfwd.src.main.java.constants.FlowEntryPriority;
-import apps.smartfwd.src.main.java.constants.FlowEntryTimeout;
 import apps.smartfwd.src.main.java.constants.Env;
 import apps.smartfwd.src.main.java.models.SwitchPair;
 import apps.smartfwd.src.main.java.task.*;
+import apps.smartfwd.src.main.java.task.base.AbstractStoppableTask;
+import apps.smartfwd.src.main.java.utils.MQDict;
 import apps.smartfwd.src.main.java.utils.Simulation;
 import com.eclipsesource.json.JsonArray;
 import com.eclipsesource.json.JsonObject;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.node.ObjectNode;
 import org.onlab.packet.*;
 import org.onlab.util.KryoNamespace;
 import org.onosproject.core.CoreService;
-import org.onosproject.kafkaintegration.api.KafkaPublisherService;
 import org.onosproject.net.*;
 import org.onosproject.net.device.DeviceService;
 import org.onosproject.net.edge.EdgePortService;
@@ -105,12 +104,10 @@ public class AppComponent {
     @Reference(cardinality = org.osgi.service.component.annotations.ReferenceCardinality.MANDATORY)
     protected GroupService groupService;
 
-    BlockingQueue<FlowTableEntry> flowEntries=new LinkedBlockingQueue<>();
+    BlockingQueue<String> kafkablockingQueue = new LinkedBlockingDeque<>();
     HashSet<MacAddress> macAddrSet = new HashSet<>();
     Set<String> localIpSet = Simulation.localIpSet;
 
-    FlowEntryTask flowEntryTask;
-    SocketServerTask classifierServer;
     private ArrayList<FlowRule> defaultFlowRulesCache = new ArrayList<>();
     private ArrayList<FlowRule> optiFlowRulesCache = new ArrayList<>();
     String topoIdxJson = "{ \"topo_idx\" : 0}";
@@ -130,132 +127,13 @@ public class AppComponent {
     private EventuallyConsistentMap<MacAddress, ReactiveForwardMetrics> metrics;
 
 
-    PeriodicalSocketClientTask.RequestGenerator defaultIdxRouteReq = new PeriodicalSocketClientTask.RequestGenerator() {
-        @Override
-        public String payload() {
-            return topoIdxJson + "*";
-        }
-    };
-    PeriodicalSocketClientTask.ResponseHandler defaultIdxRouteHandler = new PeriodicalSocketClientTask.ResponseHandler() {
-        @Override
-        public void handle(String payload) {
-            //clear default route
-            logger.info("request default routing");
-            emptyDefaultFlow();
-            TopologyDesc topo=TopologyDesc.getInstance();
-            try{
-                ObjectMapper mapper=new ObjectMapper();
-                JsonNode root=mapper.readTree(payload);
-                JsonNode routings=root.get("res1");
-                for(int i=0;i<routings.size();i++){
-                    JsonNode routing=routings.get(i);
-                    int start=routing.get(0).asInt();
-                    int end=routing.get(routing.size()-1).asInt();
-                    for(IpPrefix srcAddr:topo.getConnectedIps(topo.getDeviceId(start))){
-                        for(IpPrefix dstAddr:topo.getConnectedIps(topo.getDeviceId(end))){
-                            for(int j=0;j<routing.size()-1;j++){
-                                int curr=routing.get(j).asInt();
-                                int next=routing.get(j+1).asInt();
-                                DeviceId currDeviceId=topo.getDeviceId(curr);
-                                DeviceId nextHopDeviceId=topo.getDeviceId(next);
-                                PortNumber output=topo.getConnectionPort(currDeviceId,nextHopDeviceId);
-                                if(output.equals(INVALID_PORT)){
-                                    continue;
-                                    //todo log
-                                }
-                                FlowTableEntry entry=new FlowTableEntry();
-                                entry.setDeviceId(currDeviceId)
-                                        .setPriority(FlowEntryPriority.TABLE2_DEFAULT_ROUTING)
-                                        .setTable(2);
-                                entry.filter()
-                                        .setSrcIP(srcAddr)
-                                        .setDstIP(dstAddr);
-                                entry.action()
-                                        .setOutput(output);
-                                FlowRule rule = entry.install(flowRuleService);
-                                defaultFlowRulesCache.add(rule);
-                            }
-                        }
-                    }
 
-
-                }
-                logger.info("---------default routing have been installed----------");
-            }
-            catch (JsonProcessingException e) {
-                e.printStackTrace();
-            }
-        }
-    };
-
-    SocketServerTask.Handler classifierHandler= payload -> {
-        //start new socket client
-//        logger.info("classifier payload {}",payload);
-        TopologyDesc topo=TopologyDesc.getInstance();
-        JsonNode specifierNode;
-        JsonNode statsNode;
-        try {
-            ObjectMapper mapper=new ObjectMapper();
-            JsonNode root=mapper.readTree(payload);
-            specifierNode=root.get("specifier");
-            statsNode=root.get("stats");
-        } catch (JsonProcessingException e) {
-            e.printStackTrace();
-            return;
-        }
-        ObjectMapper mapper=new ObjectMapper();
-        String newPayload;
-        try {
-            ObjectNode node=mapper.createObjectNode();
-            node.put("stats",statsNode);
-            newPayload=mapper.writeValueAsString(node)+"*";
-        } catch (JsonProcessingException e) {
-            e.printStackTrace();
-            return;
-        }
-        SocketClientTask task=new SocketClientTask(newPayload, response -> {
-            //parse response and install flow entry
-//            logger.info("classifier response {}",response);
-            ObjectMapper m=new ObjectMapper();
-            try {
-                JsonNode resNode=m.readTree(response);
-                int vlanId=resNode.get("res").asInt();
-                int sport=specifierNode.get(0).asInt();
-                int dport=specifierNode.get(1).asInt();
-                String srcIp=specifierNode.get(2).asText();
-                IpPrefix sip=IpAddress.valueOf(srcIp).toIpPrefix();
-                String dstIp=specifierNode.get(3).asText();
-                IpPrefix dip=IpAddress.valueOf(dstIp).toIpPrefix();
-
-                String proto=specifierNode.get(4).asText();//TCP or UDP
-                FlowTableEntry entry=new FlowTableEntry();
-                DeviceId deviceId=topo.getConnectedDeviceFromIp(sip);
-                if(null==deviceId) return;
-                entry.setDeviceId(deviceId)
-                        .setPriority(FlowEntryPriority.TABLE0_TAG_FLOW)
-                        .setTable(0)
-                        .setTimeout(FlowEntryTimeout.TAG_FLOW);
-                entry.filter()
-                        .setVlanId(5)
-                        .setSrcIP(sip)
-                        .setDstIP(dip)
-                        .setDstPort(dport)
-                        .setSport(sport)
-                        .setProtocol((proto.equalsIgnoreCase("TCP")?IPv4.PROTOCOL_TCP: IPv4.PROTOCOL_UDP));
-                entry.action()
-                        .setVlanId(vlanId)
-                        .setTransition(1);
-
-                flowEntries.put(entry);
-            } catch (JsonProcessingException | InterruptedException e) {
-                e.printStackTrace();
-            }
-        },App.ALG_CLASSIFIER_IP,App.ALG_CLASSIFIER_PORT);
-        task.start();
-    };
     AtomicReference<List<Map<SwitchPair,Long>>>  collectedStats=new AtomicReference<>();
     AtomicReference<Map<SwitchPair,Long>> portRate=new AtomicReference<>();
     AtomicReference<Map<String,List<Map<String, String>>>> flowStatics = new AtomicReference<>();
+
+    KafkaListenerTask kafkaListenerTask;
+
     FlowStaticsCollector.Handler flowStaticsCollectorHandler = new FlowStaticsCollector.Handler() {
         @Override
         public void handle(Map<String,List<Map<String, String>>> stats) {
@@ -309,12 +187,21 @@ public class AppComponent {
                 }
                 long averagePackets = flowSize == 0 ? 0 : sumPackets / flowSize;
                 long averageBytes = flowSize == 0 ? 0 : sumBytes / flowSize;
-                long changeRate = (sumBytes - preSumBytes) / 20;
+                long changeRate = Math.abs(sumBytes - preSumBytes);
                 preSumBytesMap.put(device, sumBytes);
                 dynamicData.put(device, new long[]{averagePackets, maxPackets, averageBytes,
                         maxBytes, sumBytes, flowSize, changeRate});
             }
-            logger.info(dynamicData.toString());
+            ObjectMapper mapper = new ObjectMapper();
+            try {
+                String valueAsString = mapper.writeValueAsString(dynamicData);
+                String param = "data=" + valueAsString;
+                logger.info(param);
+                String sr= sendPost("http://" + App.Server_IP + ":8888/data/postDynamicData", param);
+                logger.info(sr);
+            } catch (JsonProcessingException e) {
+                e.printStackTrace();
+            }
         }
     };
     DynamicDataCollector dynamicDataCollector;
@@ -521,9 +408,15 @@ public class AppComponent {
     SocketServerTask.Handler listenWebHandler = payload -> {
         logger.info("!!!!!!!!!!!!!!!!!!!!!!!!");
         logger.info("{}", payload);
+        handleReceiveDataAndInstallRoute(payload);
+    };
+
+    ResourceRouteTask resourceRouteTask;
+
+    public void handleReceiveDataAndInstallRoute(String data) {
         ObjectMapper mapper=new ObjectMapper();
         try {
-            JsonNode dataJson=mapper.readTree(payload);
+            JsonNode dataJson=mapper.readTree(data);
             if(dataJson == null) {
                 logger.info("the json format error");
             }
@@ -587,8 +480,7 @@ public class AppComponent {
             e.printStackTrace();
         }
 
-    };
-
+    }
     private ReactivePacketProcessor processor = new ReactivePacketProcessor();
 
     @Activate
@@ -606,6 +498,15 @@ public class AppComponent {
 
         requestIntercepts();
 
+
+        /*kafkaListenerTask = new KafkaListenerTask(kafkablockingQueue);
+        kafkaListenerTask.start();
+        logger.info("kafka listener start");
+
+        resourceRouteTask = new ResourceRouteTask(kafkablockingQueue);
+        resourceRouteTask.start();
+        logger.info("resource route task start!!!");*/
+
         listenWebServerTask = new SocketServerTask(App.WEB_LISTENING_IP, App.WEB_LISTENING_PORT, listenWebHandler);
         listenWebServerTask.start();
         logger.info("listen web socket started");
@@ -617,7 +518,7 @@ public class AppComponent {
         logger.info("flowStatics started");
 
         dynamicDataCollector = new DynamicDataCollector(flowRuleService, TopologyDesc.getInstance(), dynamicDataCollectorHandler);
-        dynamicDataCollector.setInterval(20);
+        dynamicDataCollector.setInterval(25);
         dynamicDataCollector.start();
         logger.info("dynamic data collect");
 
@@ -629,6 +530,8 @@ public class AppComponent {
         packetService.removeProcessor(processor);
         flowRuleService.removeFlowRulesById(App.appId);
         listenWebServerTask.stop();
+//        kafkaListenerTask.stop();
+//        resourceRouteTask.stop();
         processor = null;
         logger.info("--------------------System Stopped-------------------------");
     }
@@ -1118,7 +1021,7 @@ public class AppComponent {
                         .setSrcMac(MacAddress.valueOf(mac));
             }
             FlowRule rule = entry.install(flowRuleService);
-            defaultFlowRulesCache.add(rule);
+//            defaultFlowRulesCache.add(rule);
         }
 
     }
@@ -1156,7 +1059,7 @@ public class AppComponent {
 
             if(Integer.parseInt(srcPort) != 0 && Byte.parseByte(protocol) == IPv4.PROTOCOL_TCP) {
             entry.filter()
-                    .setSport(Integer.parseInt(srcPort))
+//                    .setSport(Integer.parseInt(srcPort))
                     .setDstPort(Integer.parseInt(dstPort));
             }
 
@@ -1164,7 +1067,7 @@ public class AppComponent {
                     .setOutput(output);
             entry.setTimeout(60);
             FlowRule rule = entry.install(flowRuleService);
-            defaultFlowRulesCache.add(rule);
+//            defaultFlowRulesCache.add(rule);
         }
 
     }
@@ -1204,8 +1107,8 @@ public class AppComponent {
                     .setProtocol(Byte.parseByte(protocol));
             if(Integer.parseInt(dstPort) != 0 && Byte.parseByte(protocol) == IPv4.PROTOCOL_TCP) {
                 entry.filter()
-                        .setSport(Integer.parseInt(dstPort))
-                        .setDstPort(Integer.parseInt(srcPort));
+                        .setSport(Integer.parseInt(dstPort));
+//                        .setDstPort(Integer.parseInt(srcPort));
             }
 
 
@@ -1213,7 +1116,7 @@ public class AppComponent {
                     .setOutput(output);
             entry.setTimeout(60);
             FlowRule rule = entry.install(flowRuleService);
-            defaultFlowRulesCache.add(rule);
+//            defaultFlowRulesCache.add(rule);
         }
 
     }
@@ -1257,7 +1160,7 @@ public class AppComponent {
                 entry.setTimeout(60);
             }
             FlowRule rule = entry.install(flowRuleService);
-            defaultFlowRulesCache.add(rule);
+//            defaultFlowRulesCache.add(rule);
         }
 
     }
@@ -1389,6 +1292,24 @@ public class AppComponent {
                 logger.info(param);
                 String sr= sendPost("http://" + App.Server_IP + ":8888/user/verifyByMac", param);
                 logger.info(sr);
+           /*     Map<String, String> tmpMap = new HashMap<>();
+                tmpMap.put("srcMac", macAddress.toString());
+                tmpMap.put("srcIP", srcIP.toString());
+                tmpMap.put("dstIP", dstIP.toString());
+                tmpMap.put("switcher", String.valueOf(deviceIdx));
+                tmpMap.put("srcPort", String.valueOf(srcPort));
+                tmpMap.put("dstPort", String.valueOf(dstPort));
+                tmpMap.put("protocol", String.valueOf(protocol));
+                ObjectMapper mapper = new ObjectMapper();
+                try {
+                    String data = mapper.writeValueAsString(tmpMap);
+                    //发送消息到kafka
+                    SocketClientTask.sendToKafka(MQDict.PRODUCER_TOPICA, data);
+                    logger.info("send to kafka---->" + data);
+                } catch (JsonProcessingException e) {
+                    e.printStackTrace();
+                    logger.info("<---->" + e.toString() );
+                }*/
                 return;
             }
             logger.info("other  packet in message");
@@ -1426,6 +1347,26 @@ public class AppComponent {
 
     }
 
+
+    private class ResourceRouteTask extends AbstractStoppableTask {
+        BlockingQueue<String> blockingQueue;
+        public ResourceRouteTask( BlockingQueue<String> blockingQueue) {
+            this.blockingQueue = blockingQueue;
+        }
+        @Override
+        public void run() {
+            isRunning.set(true);
+            while(!stopRequested){
+                try{
+                    String data = blockingQueue.take();
+                    handleReceiveDataAndInstallRoute(data);
+                }catch (InterruptedException exception){
+                    stopRequested=true;
+                }
+            }
+            isRunning.set(false);
+        }
+    }
 }
 
 

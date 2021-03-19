@@ -74,7 +74,7 @@ public class DynamicDataCollector extends PeriodicalTask {
                     if (srcIP.equals("")) {
                         key = srcMAC + ">" + dstIP;
                     } else {
-                        key = srcIP + ">" + dstMAC;
+                        key = dstMAC + ">" + srcIP;
                     }
                     long[] tmpOrDefault = tmp.getOrDefault(key, new long[]{0L, 0L});
                     long packets = tmpOrDefault[0] + entry.packets();
@@ -85,11 +85,12 @@ public class DynamicDataCollector extends PeriodicalTask {
                 currStats.put(String.valueOf(topo.getDeviceIdx(deviceId)), tmp);
             }
 
+
             //diff and replace
             for(DeviceId deviceId:topo.getDeviceIds()){
                 String device = String.valueOf(topo.getDeviceIdx(deviceId));
                 Map<String, long[]> curr=currStats.get(device);
-                Map<String, long[]> pre=preStats.get(device);
+                Map<String, long[]> pre=preStats.getOrDefault(device, new HashMap<>());
                 Map<String, long[]> r=new HashMap<>();
                 //diff and replace
                 for(String key:curr.keySet()){

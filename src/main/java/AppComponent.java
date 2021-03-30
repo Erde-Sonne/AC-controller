@@ -517,10 +517,10 @@ public class AppComponent {
         flowStaticsCollector.start();
         logger.info("flowStatics started");
 
-        dynamicDataCollector = new DynamicDataCollector(flowRuleService, TopologyDesc.getInstance(), dynamicDataCollectorHandler);
+        /*dynamicDataCollector = new DynamicDataCollector(flowRuleService, TopologyDesc.getInstance(), dynamicDataCollectorHandler);
         dynamicDataCollector.setInterval(25);
         dynamicDataCollector.start();
-        logger.info("dynamic data collect");
+        logger.info("dynamic data collect");*/
 
     }
     @Deactivate

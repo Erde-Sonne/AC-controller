@@ -38,6 +38,7 @@ import org.onosproject.net.flowobjective.FlowObjectiveService;
 import org.onosproject.net.group.GroupService;
 import org.onosproject.net.host.HostService;
 import org.onosproject.net.packet.InboundPacket;
+import org.onosproject.net.packet.OutboundPacket;
 import org.onosproject.net.packet.PacketContext;
 import org.onosproject.net.packet.PacketPriority;
 import org.onosproject.net.packet.PacketProcessor;
@@ -51,6 +52,7 @@ import org.osgi.service.component.annotations.Deactivate;
 import org.osgi.service.component.annotations.Reference;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import p4.v1.P4RuntimeOuterClass;
 
 import java.io.BufferedWriter;
 import java.io.File;
@@ -492,7 +494,6 @@ public class AppComponent {
         logger.info("Init static flow table");
         init();
         packetService.addProcessor(processor, PacketProcessor.director(1));
-
         requestIntercepts();
 
 
@@ -955,7 +956,9 @@ public class AppComponent {
 
     // Sends a packet out the specified port.
     private void packetOut(PacketContext context, PortNumber portNumber) {
-        context.treatmentBuilder().setOutput(portNumber);
+        context.treatmentBuilder()
+                .setOutput(portNumber);
+        logger.info("---->>>"+logContext(context));
         context.send();
     }
 
@@ -1200,6 +1203,7 @@ public class AppComponent {
             if (context.isHandled()) {
                 return;
             }
+
             InboundPacket pkt = context.inPacket();
 
             Ethernet ethPkt = pkt.parsed();
@@ -1258,19 +1262,19 @@ public class AppComponent {
                 int dstPort = 0;
 //                logger.info("srcIP:" + srcIP + "    dstIP:" + dstIP + "    protocol:" + protocol);
 
-                if(protocol == IPv4.PROTOCOL_TCP) {
+       /*         if(protocol == IPv4.PROTOCOL_TCP) {
                     TCP tcpPayload =  (TCP) ipPayload.getPayload();
                     dstPort = tcpPayload.getDestinationPort();
                     String key = dstIP + "->" + dstPort;
                     if(redirectMap.containsKey(key)) {
                         String newSrcIP = redirectMap.get(key);
                         ipPayload.setSourceAddress(newSrcIP);
-                        packetOut(context, port);
+                        packetOut(context, PortNumber.TABLE);
                         logger.info("!!!!!!"+ logContext(context));
                         redirectMap.remove(key);
                         return;
                     }
-                }
+                }*/
 
                 //第一次packetIn会默认配置到网关的路由
                 if(!macAddrSet.contains(macAddress)) {
@@ -1287,8 +1291,14 @@ public class AppComponent {
 //                hostRouteToNat(new LinkedList<>(dijkstraPath), FlowEntryPriority.NAT_DEFAULT_ROUTING);
                     hostRouteToNat(new LinkedList<>(dijkstraPath), IpPrefix.valueOf("114.114.114.114/32"), FlowEntryPriority.NAT_DEFAULT_ROUTING, 1, null);
 
-                    hostRouteToNat(new LinkedList<>(dijkstraPath), IpPrefix.valueOf("218.194.50.201/24"), FlowEntryPriority.NAT_DEFAULT_ROUTING, 1, null);
+                    hostRouteToNat(new LinkedList<>(dijkstraPath), IpPrefix.valueOf("218.194.50.201/32"), FlowEntryPriority.NAT_DEFAULT_ROUTING - 5, 1, null);
                     macAddrSet.add(macAddress);
+
+                    try {
+                            TimeUnit.SECONDS.sleep(2);
+                        } catch (InterruptedException e) {
+                            e.printStackTrace();
+                        }
                 }
 
                 if(!isLoginMac.contains(macAddress)) {
@@ -1297,14 +1307,24 @@ public class AppComponent {
                         srcPort = tcpPayload.getSourcePort();
                         String key = srcIP + "->" + srcPort;
                         String value = dstIP.toString();
+                        if(redirectMap.containsKey(key)) {
+                            return;
+                        }
+
                         ipPayload.setDestinationAddress("218.194.50.201");
+                        ethPkt.setDestinationMACAddress("a4:b1:c1:ea:11:d1");
                         redirectMap.put(key, value);
                         DeviceId deviceId = pkt.receivedFrom().deviceId();
-                        int srcId = TopologyDesc.getInstance().getDeviceIdx(deviceId);
-                        Deque<Integer> dijkstraPath = Dijkstra(Env.graph, srcId, 0);
-                        natRouteToHost(new LinkedList<>(dijkstraPath), macAddress.toString(), IpPrefix.valueOf(dstIP + "/32"), FlowEntryPriority.NAT_DEFAULT_ROUTING, 2, port);
+//                        int srcId = TopologyDesc.getInstance().getDeviceIdx(deviceId);
+//                        Deque<Integer> dijkstraPath = Dijkstra(Env.graph, srcId, 0);
+//                        natRouteToHost(new LinkedList<>(dijkstraPath), macAddress.toString(), IpPrefix.valueOf(dstIP + "/32"), FlowEntryPriority.NAT_DEFAULT_ROUTING, 2, port);
+//                        try {
+//                            TimeUnit.SECONDS.sleep(2);
+//                        } catch (InterruptedException e) {
+//                            e.printStackTrace();
+//                        }
+                        packetOut(context, PortNumber.TABLE);
 //                        logger.info("!!!!!!!---->>>"+logContext(context));
-                        packetOut(context, port);
                     }
                     return;
                 }
@@ -1388,10 +1408,16 @@ public class AppComponent {
     public String logContext(PacketContext context) {
         Ethernet parsed = context.inPacket().parsed();
         IPacket iPacket = parsed.getPayload();
+        short vlanID = parsed.getVlanID();
+        MacAddress sourceMAC = parsed.getSourceMAC();
+        MacAddress destinationMAC = parsed.getDestinationMAC();
         IPv4 ipPayload = (IPv4) iPacket;
         IpAddress srcIP = IpAddress.valueOf(ipPayload.getSourceAddress());
         IpAddress dstIP = IpAddress.valueOf(ipPayload.getDestinationAddress());
-        String out = "src:" + srcIP + "----->" + "dst:" + dstIP;
+        TCP tcpPayload =  (TCP) ipPayload.getPayload();
+        int srcPort = tcpPayload.getSourcePort();
+        int dstPort = tcpPayload.getDestinationPort();
+        String out = "vlanid: " + vlanID + "  srcMac" + sourceMAC + "  dstMac" + destinationMAC + "src:" + srcIP + "----->" + "dst:" + dstIP + "  srcport:" + srcPort + "  dstposrt:" + dstPort;
         return out;
     }
 

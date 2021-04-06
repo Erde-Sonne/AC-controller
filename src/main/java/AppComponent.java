@@ -37,8 +37,7 @@ import org.onosproject.net.flow.*;
 import org.onosproject.net.flowobjective.FlowObjectiveService;
 import org.onosproject.net.group.GroupService;
 import org.onosproject.net.host.HostService;
-import org.onosproject.net.packet.InboundPacket;
-import org.onosproject.net.packet.OutboundPacket;
+import org.onosproject.net.packet.InboundPacket;;
 import org.onosproject.net.packet.PacketContext;
 import org.onosproject.net.packet.PacketPriority;
 import org.onosproject.net.packet.PacketProcessor;
@@ -52,12 +51,12 @@ import org.osgi.service.component.annotations.Deactivate;
 import org.osgi.service.component.annotations.Reference;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import p4.v1.P4RuntimeOuterClass;
 
 import java.io.BufferedWriter;
 import java.io.File;
 import java.io.FileWriter;
 import java.io.IOException;
+import java.nio.ByteBuffer;
 import java.text.SimpleDateFormat;
 import java.util.*;
 import java.util.concurrent.*;
@@ -543,7 +542,7 @@ public class AppComponent {
         //在table0 安装与host直连switch的默认路由
 //        installFlowEntryToEndSwitch(0);
         logger.info("Flow entry for end host installed");
-        installFlowEntryToNatSwitch();
+//        installFlowEntryToNatSwitch();
 //        //在table0 安装已经打标签的流的流表
 //        installFlowEntryForLabelledTraffic();
 //        logger.info("Flow entry for labelled traffic installed");
@@ -955,11 +954,15 @@ public class AppComponent {
 
 
     // Sends a packet out the specified port.
-    private void packetOut(PacketContext context, PortNumber portNumber) {
+    private void packetOut(PacketContext context, byte[] outdata, PortNumber portNumber) {
         context.treatmentBuilder()
                 .setOutput(portNumber);
-        logger.info("---->>>"+logContext(context));
+        ByteBuffer data = context.outPacket().data();
+        data.clear();
+        data.put(outdata);
         context.send();
+//        packetService.emit(context.outPacket());
+//        logger.info("out to switcher");
     }
 
 
@@ -992,12 +995,15 @@ public class AppComponent {
             routing.add(path.pollFirst());
         }
         Integer dst = routing.get(size - 1);
-        for(int j=0;j<routing.size()-1;j++){
+        for(int j=0;j<routing.size();j++){
             int curr=routing.get(j);
-            int next=routing.get(j+1);
             DeviceId currDeviceId=topo.getDeviceId(curr);
-            DeviceId nextHopDeviceId=topo.getDeviceId(next);
-            PortNumber output=topo.getConnectionPort(currDeviceId,nextHopDeviceId);
+            PortNumber output = PortNumber.portNumber(2);
+            if(j < routing.size() - 1) {
+                int next=routing.get(j+1);
+                DeviceId nextHopDeviceId=topo.getDeviceId(next);
+                output = topo.getConnectionPort(currDeviceId,nextHopDeviceId);
+            }
             if(output.equals(INVALID_PORT)){
                 logger.info("the adjacent switch port error");
                 continue;
@@ -1089,12 +1095,15 @@ public class AppComponent {
         for(int i = 0; i < size; i++) {
             routing.add(path.pollFirst());
         }
-        for(int j=0;j<routing.size()-1;j++){
+        for(int j=0;j<routing.size();j++){
             int curr=routing.get(j);
-            int next=routing.get(j+1);
+            PortNumber output = PortNumber.portNumber(2);
             DeviceId currDeviceId=topo.getDeviceId(curr);
-            DeviceId nextHopDeviceId=topo.getDeviceId(next);
-            PortNumber output=topo.getConnectionPort(currDeviceId,nextHopDeviceId);
+            if(j < routing.size() - 1) {
+                int next=routing.get(j+1);
+                DeviceId nextHopDeviceId=topo.getDeviceId(next);
+                output = topo.getConnectionPort(currDeviceId,nextHopDeviceId);
+            }
             if(output.equals(INVALID_PORT)){
                 logger.info("the adjacent switch port error");
                 continue;
@@ -1262,19 +1271,20 @@ public class AppComponent {
                 int dstPort = 0;
 //                logger.info("srcIP:" + srcIP + "    dstIP:" + dstIP + "    protocol:" + protocol);
 
-       /*         if(protocol == IPv4.PROTOCOL_TCP) {
+                if(protocol == IPv4.PROTOCOL_TCP) {
                     TCP tcpPayload =  (TCP) ipPayload.getPayload();
                     dstPort = tcpPayload.getDestinationPort();
                     String key = dstIP + "->" + dstPort;
                     if(redirectMap.containsKey(key)) {
+                        logger.info("-------------------------------------------");
                         String newSrcIP = redirectMap.get(key);
                         ipPayload.setSourceAddress(newSrcIP);
-                        packetOut(context, PortNumber.TABLE);
-                        logger.info("!!!!!!"+ logContext(context));
+                        packetOut(context,  ethPkt.serialize(), PortNumber.TABLE);
                         redirectMap.remove(key);
+                        logger.info(key + "  have been removed");
                         return;
                     }
-                }*/
+                }
 
                 //第一次packetIn会默认配置到网关的路由
                 if(!macAddrSet.contains(macAddress)) {
@@ -1287,11 +1297,12 @@ public class AppComponent {
                     Deque<Integer> dijkstraPath = Dijkstra(Env.graph, srcId, 0);
                     logger.info(dijkstraPath.toString());
                     //配置到dns服务器的连通
-                    natRouteToHost(new LinkedList<>(dijkstraPath), macAddress.toString(), IpPrefix.valueOf("114.114.114.114/32"), FlowEntryPriority.NAT_DEFAULT_ROUTING, 1, port);
+//                    natRouteToHost(new LinkedList<>(dijkstraPath), macAddress.toString(), IpPrefix.valueOf("114.114.114.114/32"), FlowEntryPriority.NAT_DEFAULT_ROUTING, 1, port);
 //                hostRouteToNat(new LinkedList<>(dijkstraPath), FlowEntryPriority.NAT_DEFAULT_ROUTING);
-                    hostRouteToNat(new LinkedList<>(dijkstraPath), IpPrefix.valueOf("114.114.114.114/32"), FlowEntryPriority.NAT_DEFAULT_ROUTING, 1, null);
+//                    hostRouteToNat(new LinkedList<>(dijkstraPath), IpPrefix.valueOf("114.114.114.114/32"), FlowEntryPriority.NAT_DEFAULT_ROUTING, 1, null);
 
-                    hostRouteToNat(new LinkedList<>(dijkstraPath), IpPrefix.valueOf("218.194.50.201/32"), FlowEntryPriority.NAT_DEFAULT_ROUTING - 5, 1, null);
+                    hostRouteToNat(new LinkedList<>(dijkstraPath), IpPrefix.valueOf("192.168.1.36/32"), FlowEntryPriority.NAT_DEFAULT_ROUTING - 5, 1, null);
+//                    natRouteToHost(new LinkedList<>(dijkstraPath), macAddress.toString(), IpPrefix.valueOf("192.168.1.49/32"), FlowEntryPriority.NAT_DEFAULT_ROUTING - 5, 1, port);
                     macAddrSet.add(macAddress);
 
                     try {
@@ -1311,19 +1322,14 @@ public class AppComponent {
                             return;
                         }
 
-                        ipPayload.setDestinationAddress("218.194.50.201");
-                        ethPkt.setDestinationMACAddress("a4:b1:c1:ea:11:d1");
+                        ipPayload.setDestinationAddress("192.168.1.36");
+                        ethPkt.setDestinationMACAddress("9c:69:b4:60:a8:bf");
                         redirectMap.put(key, value);
                         DeviceId deviceId = pkt.receivedFrom().deviceId();
-//                        int srcId = TopologyDesc.getInstance().getDeviceIdx(deviceId);
-//                        Deque<Integer> dijkstraPath = Dijkstra(Env.graph, srcId, 0);
+                        int srcId = TopologyDesc.getInstance().getDeviceIdx(deviceId);
+                        Deque<Integer> dijkstraPath = Dijkstra(Env.graph, srcId, 0);
 //                        natRouteToHost(new LinkedList<>(dijkstraPath), macAddress.toString(), IpPrefix.valueOf(dstIP + "/32"), FlowEntryPriority.NAT_DEFAULT_ROUTING, 2, port);
-//                        try {
-//                            TimeUnit.SECONDS.sleep(2);
-//                        } catch (InterruptedException e) {
-//                            e.printStackTrace();
-//                        }
-                        packetOut(context, PortNumber.TABLE);
+                        packetOut(context, ethPkt.serialize(),PortNumber.TABLE);
 //                        logger.info("!!!!!!!---->>>"+logContext(context));
                     }
                     return;
@@ -1407,6 +1413,7 @@ public class AppComponent {
 
     public String logContext(PacketContext context) {
         Ethernet parsed = context.inPacket().parsed();
+
         IPacket iPacket = parsed.getPayload();
         short vlanID = parsed.getVlanID();
         MacAddress sourceMAC = parsed.getSourceMAC();

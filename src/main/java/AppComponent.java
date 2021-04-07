@@ -103,7 +103,7 @@ public class AppComponent {
     BlockingQueue<String> kafkablockingQueue = new LinkedBlockingDeque<>();
     HashSet<MacAddress> macAddrSet = new HashSet<>();
     Set<MacAddress> isLoginMac = new CopyOnWriteArraySet<>();
-    Map<String, String> redirectMap = new ConcurrentHashMap<>();
+    Map<String, Map<String, String>> redirectRootMap = new ConcurrentHashMap<>();
     Set<String> localIpSet = Simulation.localIpSet;
 
     private ArrayList<FlowRule> defaultFlowRulesCache = new ArrayList<>();
@@ -419,60 +419,55 @@ public class AppComponent {
                 logger.info("the json format error");
             }
             assert dataJson != null;
-            String srcMac = dataJson.get("srcMac").asText();
-            String dstIP = dataJson.get("dstIP").asText();
-            String switcher = dataJson.get("switcher").asText();
-            String srcPort = dataJson.get("srcPort").asText();
-            String dstPort = dataJson.get("dstPort").asText();
-            String protocol = dataJson.get("protocol").asText();
-            logger.info("the mac address is -> " + srcMac  + "the dst IP is ->" + dstIP);
-            Deque<Integer> path = null;
-            if (localIpSet.contains(dstIP)) {
-                String[] split = dstIP.split("10.0.0.");
-                logger.info("dst source id is: " + split[1]);
-                //安装到host的流表
-                installFlowEntryToEndSwitch(Integer.parseInt(split[1]) - 1, dstIP);
-                //计算出到资源服务器的路径
-                path = Dijkstra(Env.graph, Integer.parseInt(switcher), Integer.parseInt(split[1]) - 1);
-            } else {
-                path = Dijkstra(Env.graph, Integer.parseInt(switcher), 0);
+            int info = dataJson.get("info").asInt();
+            if(info == 2){
+                try {
+                    TimeUnit.SECONDS.sleep(5);
+                } catch (InterruptedException e) {
+                    e.printStackTrace();
+                }
+                String loginMac = dataJson.get("loginMac").asText();
+                isLoginMac.add(MacAddress.valueOf(loginMac));
+                logger.info("mac: " + loginMac + " have been login ----yes----");
+                redirectRootMap.remove(loginMac);
+                Deque<Integer> dijkstraPath = Dijkstra(Env.graph, 9, 0);
+                natRouteToHost(new LinkedList<>(dijkstraPath), loginMac, IpPrefix.valueOf("192.168.1.49/32"),
+                        FlowEntryPriority.NAT_DEFAULT_ROUTING - 5, 1, PortNumber.portNumber(2));
+            } else if(info == 3) {
+                try {
+                    TimeUnit.SECONDS.sleep(5);
+                } catch (InterruptedException e) {
+                    e.printStackTrace();
+                }
+                String loginMac = dataJson.get("loginMac").asText();
+                isLoginMac.remove(MacAddress.valueOf(loginMac));
+            } else if(info == 1) {
+                String srcMac = dataJson.get("srcMac").asText();
+                String dstIP = dataJson.get("dstIP").asText();
+                String switcher = dataJson.get("switcher").asText();
+                String srcPort = dataJson.get("srcPort").asText();
+                String dstPort = dataJson.get("dstPort").asText();
+                String protocol = dataJson.get("protocol").asText();
+                logger.info("the mac address is -> " + srcMac  + "the dst IP is ->" + dstIP);
+                Deque<Integer> path = null;
+                if (localIpSet.contains(dstIP)) {
+                    String[] split = dstIP.split("10.0.0.");
+                    logger.info("dst source id is: " + split[1]);
+                    //安装到host的流表
+                    installFlowEntryToEndSwitch(Integer.parseInt(split[1]) - 1, dstIP);
+                    //计算出到资源服务器的路径
+                    path = Dijkstra(Env.graph, Integer.parseInt(switcher), Integer.parseInt(split[1]) - 1);
+                } else {
+                    path = Dijkstra(Env.graph, Integer.parseInt(switcher), 0);
+                }
+
+                logger.info(path.toString());
+                hostRouteToDst(new LinkedList<>(path), srcMac, dstIP,
+                        srcPort, dstPort, protocol);
+                dstRouteToHost(new LinkedList<>(path), srcMac, dstIP,
+                        srcPort, dstPort, protocol);
+                logger.info("you can visit the source server" + dstIP);
             }
-
-            logger.info(path.toString());
-            hostRouteToDst(new LinkedList<>(path), srcMac, dstIP,
-                    srcPort, dstPort, protocol);
-            dstRouteToHost(new LinkedList<>(path), srcMac, dstIP,
-                    srcPort, dstPort, protocol);
-            logger.info("you can visit the source server" + dstIP);
-
-//            if(status == 1) {
-//                JsonNode node = dataJson.get("dstIds");
-//                if(node.isArray()) {
-//                    int size = node.size();
-//                    for(int i = 0; i < size; i++) {
-//                        int dst = node.get(i).asInt();
-//
-//                    }
-//
-//                }
-//
-//            } else if (status == 2) {
-//                logger.info("----------reading set internet------------");
-//                Deque<Integer> dijkstraPath = Dijkstra(Env.graph, hostId, 0);
-//                logger.info(dijkstraPath.toString());
-//                natRouteToHost(new LinkedList<>(dijkstraPath),
-//                        mac, FlowEntryPriority.RESOURCE_DEFAULT_ROUTING - 1, 2);
-//                hostRouteToNat(new LinkedList<>(dijkstraPath), null,
-//                        FlowEntryPriority.RESOURCE_DEFAULT_ROUTING - 1, 2, mac);
-//                logger.info("can surf the Internet");
-//
-//            }
-//            if(toInternet == 1) {
-//                //允许host连接外网
-//                logger.info("hostId:" + hostId + "can be connected to Internet");
-//                Deque<Integer> path = Dijkstra(Env.graph, hostId, 0);
-//                hostRouteToNat(path, FlowEntryPriority.INTERNET_ROUTING);
-//            }
 
         } catch (JsonProcessingException e) {
             e.printStackTrace();
@@ -1257,22 +1252,26 @@ public class AppComponent {
                     return;
                 }
             }
-
+            //packetin 消息接入的交换机
             PortNumber port = pkt.receivedFrom().port();
+            DeviceId deviceId = pkt.receivedFrom().deviceId();
+            int srcId = TopologyDesc.getInstance().getDeviceIdx(deviceId);
 
             // 解析出包中的IP字段
             IPv4 ipPayload = (IPv4) ethPkt.getPayload();
-            if(ipPayload != null) {
+            if(ipPayload != null && (srcId == 0 || srcId == 9)) {
                 IpAddress srcIP = IpAddress.valueOf(ipPayload.getSourceAddress());
                 IpAddress dstIP = IpAddress.valueOf(ipPayload.getDestinationAddress());
                 byte protocol = ipPayload.getProtocol();
                 int srcPort = 0;
                 int dstPort = 0;
 //                logger.info("srcIP:" + srcIP + "    dstIP:" + dstIP + "    protocol:" + protocol);
-
                 //如果用户没有登陆,将修改ip包,强制跳转到登陆页面
-
-                    if(protocol == IPv4.PROTOCOL_TCP) {
+                if(!isLoginMac.contains(macAddress)) {
+                    if(protocol == IPv4.PROTOCOL_TCP && srcId == 0) {
+                        Map<String, String> redirectMap = redirectRootMap.
+                                get(ethPkt.getDestinationMAC().toString());
+                        assert  redirectMap != null;
                         TCP tcpPayload =  (TCP) ipPayload.getPayload();
                         dstPort = tcpPayload.getDestinationPort();
                         String key = dstIP + "->" + dstPort;
@@ -1289,13 +1288,11 @@ public class AppComponent {
                         }
                     }
 
-                if(!isLoginMac.contains(macAddress)) {
                     //第一次packetIn会默认配置到网关的路由
-                    if(!macAddrSet.contains(macAddress)) {
+                    if(!macAddrSet.contains(macAddress) && srcId == 9) {
                         logger.info("source mac addr:" + macAddress);
                         logger.info("install the routing to gate");
-                        DeviceId deviceId = pkt.receivedFrom().deviceId();
-                        int srcId = TopologyDesc.getInstance().getDeviceIdx(deviceId);
+
                         logger.info("srcid:" + srcId);
     //                    installFlowEndSwitchToHost(macAddress, deviceId, port);
                         Deque<Integer> dijkstraPath = Dijkstra(Env.graph, srcId, 0);
@@ -1316,7 +1313,10 @@ public class AppComponent {
                             }
                     }
 
-                    if(protocol == IPv4.PROTOCOL_TCP) {
+
+                    if(protocol == IPv4.PROTOCOL_TCP  && srcId == 9) {
+                        Map<String, String> redirectMap = redirectRootMap.
+                                getOrDefault(macAddress.toString(), new ConcurrentHashMap<>());
                         TCP tcpPayload =  (TCP) ipPayload.getPayload();
                         srcPort = tcpPayload.getSourcePort();
                         String key = srcIP + "->" + srcPort;
@@ -1330,36 +1330,35 @@ public class AppComponent {
                         tcpPayload.resetChecksum();
                         ipPayload.resetChecksum();
                         redirectMap.put(key, value);
-                        DeviceId deviceId = pkt.receivedFrom().deviceId();
-                        int srcId = TopologyDesc.getInstance().getDeviceIdx(deviceId);
+                        redirectRootMap.put(macAddress.toString(), redirectMap);
+                        logger.info("***********************************");
                         Deque<Integer> dijkstraPath = Dijkstra(Env.graph, srcId, 0);
                         natRouteToHost(new LinkedList<>(dijkstraPath), macAddress.toString(), IpPrefix.valueOf(dstIP + "/32"), FlowEntryPriority.NAT_DEFAULT_ROUTING, 2, port);
                         packetOut(context, ethPkt.serialize(),PortNumber.TABLE);
-//                        logger.info("!!!!!!!---->>>"+logContext(context));
+
                     }
                     return;
-
                     //登陆
                 } else {
-                    if (protocol == IPv4.PROTOCOL_ICMP) {
-                        logger.info("icmp  ping");
-                    } else if(protocol == IPv4.PROTOCOL_TCP) {
-                        TCP tcpPayload =  (TCP) ipPayload.getPayload();
-                        srcPort = tcpPayload.getSourcePort();
-                        dstPort = tcpPayload.getDestinationPort();
-                    } else if(protocol == IPv4.PROTOCOL_UDP) {
-                        UDP udpPayload =  (UDP) ipPayload.getPayload();
-                        srcPort = udpPayload.getSourcePort();
-                        dstPort = udpPayload.getDestinationPort();
-                    }
-                    DeviceId deviceId = pkt.receivedFrom().deviceId();
-                    int deviceIdx = TopologyDesc.getInstance().getDeviceIdx(deviceId);
-                    String param = "srcMac=" + macAddress.toString() + "&srcIP=" + srcIP + "&dstIP=" +
-                            dstIP.toString() + "&switcher=" + deviceIdx + "&srcPort=" + srcPort +
-                            "&dstPort=" + dstPort + "&protocol=" + protocol;
-                    logger.info(param);
-                    String sr= sendPost("http://" + App.Server_IP + ":8888/user/verifyByMac", param);
-                    logger.info(sr);
+                    if(srcId == 9) {
+                        if (protocol == IPv4.PROTOCOL_ICMP) {
+                            logger.info("icmp  ping");
+                        } else if (protocol == IPv4.PROTOCOL_TCP) {
+                            TCP tcpPayload = (TCP) ipPayload.getPayload();
+                            srcPort = tcpPayload.getSourcePort();
+                            dstPort = tcpPayload.getDestinationPort();
+                        } else if (protocol == IPv4.PROTOCOL_UDP) {
+                            UDP udpPayload = (UDP) ipPayload.getPayload();
+                            srcPort = udpPayload.getSourcePort();
+                            dstPort = udpPayload.getDestinationPort();
+                        }
+
+                        String param = "srcMac=" + macAddress.toString() + "&srcIP=" + srcIP + "&dstIP=" +
+                                dstIP.toString() + "&switcher=" + srcId + "&srcPort=" + srcPort +
+                                "&dstPort=" + dstPort + "&protocol=" + protocol;
+                        logger.info(param);
+                        String sr = sendPost("http://" + App.Server_IP + ":8888/user/verifyByMac", param);
+                        logger.info(sr);
            /*     Map<String, String> tmpMap = new HashMap<>();
                 tmpMap.put("srcMac", macAddress.toString());
                 tmpMap.put("srcIP", srcIP.toString());
@@ -1378,8 +1377,11 @@ public class AppComponent {
                     e.printStackTrace();
                     logger.info("<---->" + e.toString() );
                 }*/
-                    return;
+                        return;
+
+                    }
                 }
+
             }
 
             //packet in 的包不是IP包

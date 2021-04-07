@@ -45,9 +45,7 @@ public class App {
     public static final String WEB_LISTENING_IP="0.0.0.0";
     public static final int WEB_LISTENING_PORT=1060;
 
-    public static final String Server_IP="218.194.50.201";
+    public static final String Server_IP="192.168.1.49";
     public static final int Server_PORT=1061;
-
-
 }
 

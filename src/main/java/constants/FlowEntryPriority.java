@@ -23,6 +23,7 @@ public class FlowEntryPriority {
 
     public static final int RESOURCE_DEFAULT_ROUTING=55000;
     public static final int NAT_DEFAULT_ROUTING=50000;
+    public static final int DNS_DEFAULT_ROUTING=60000;
     public static final int INTERNET_ROUTING=48000;
 
 

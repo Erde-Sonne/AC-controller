@@ -205,203 +205,6 @@ public class AppComponent {
     DynamicDataCollector dynamicDataCollector;
 
 
-    TrafficMatrixCollector.Handler trafficMatrixCollectorHandler=new TrafficMatrixCollector.Handler() {
-        @Override
-        public void handle(List<Map<SwitchPair, Long>> stats) {
-            collectedStats.set(stats);
-        }
-    };
-    TrafficMatrixCollector trafficMatrixCollector;
-
-
-
-    PeriodicalSocketClientTask.ResponseHandler optRoutingRespHandler = resp -> {
-        writeTimeHeaderToFile("/data/theMaxRate.txt");
-        int topo_idx = 0;
-        try {
-            ObjectMapper mapper=new ObjectMapper();
-            JsonNode topoIdx = mapper.readTree(topoIdxJson);
-            topo_idx = topoIdx.get("topo_idx").asInt();
-        } catch (JsonProcessingException e) {
-            e.printStackTrace();
-        }
-        writeToFile("当前TOPO:" + topo_idx, "/data/theMaxRate.txt");
-        writeToFile("优化前:" + getCurrentMaxRate().toString() + " Mbit/s", "/data/theMaxRate.txt");
-        writeToFile("优化前:" + getAllRate(), "/data/matchRate.txt");
-        emptyOptiFlow();
-        TopologyDesc topo=TopologyDesc.getInstance();
-        ObjectMapper mapper=new ObjectMapper();
-        try {
-            JsonNode root=mapper.readTree(resp);
-            for(int i=0;i<Env.N_FLOWS;i++){
-                JsonNode node=root.get("res" + String.valueOf(i+1));
-                for(int k=0;k<node.size();k++){
-                    JsonNode routing=node.get(k);
-                    int start=routing.get(0).asInt();
-                    int end=routing.get(routing.size()-1).asInt();
-                    for(IpPrefix srcAddr:topo.getConnectedIps(topo.getDeviceId(start))){
-                        for(IpPrefix dstAddr:topo.getConnectedIps(topo.getDeviceId(end))){
-                            for(int j=0;j<routing.size()-1;j++){
-                                int curr=routing.get(j).asInt();
-                                int next=routing.get(j+1).asInt();
-                                DeviceId currDeviceId=topo.getDeviceId(curr);
-                                DeviceId nextHopDeviceId=topo.getDeviceId(next);
-                                PortNumber output=topo.getConnectionPort(currDeviceId,nextHopDeviceId);
-                                if(output.equals(INVALID_PORT)){
-                                    continue;
-                                    //todo log
-                                }
-                                FlowTableEntry entry=new FlowTableEntry();
-                                entry.setDeviceId(currDeviceId)
-                                        .setPriority(FlowEntryPriority.TABLE2_OPT_ROUTING)
-                                        .setTable(2);
-                                entry.filter()
-                                        .setSrcIP(srcAddr)
-                                        .setDstIP(dstAddr)
-                                        .setVlanId(i);
-                                entry.action()
-                                        .setOutput(output);
-                                FlowRule rule = entry.install(flowRuleService);
-                                optiFlowRulesCache.add(rule);
-                            }
-                        }
-                    }
-
-                }
-            }
-            logger.info("---------opt routing have been installed----------");
-            try {
-                Thread.sleep(12000);
-            } catch (InterruptedException e) {
-                e.printStackTrace();
-            }
-            writeTimeHeaderToFile("/data/theMaxRate.txt");
-            writeToFile("优化后：" + getCurrentMaxRate().toString() + " Mbit/s", "/data/theMaxRate.txt");
-            writeToFile("%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%", "/data/theMaxRate.txt");
-            writeToFile("优化后：" + getAllRate(), "/data/matchRate.txt");
-//            writeToFile("after", rateFilePath);
-//            rateToFile(portRate, rateFilePath);
-            try {
-                Thread.sleep(150000);
-            } catch (InterruptedException e) {
-                e.printStackTrace();
-            }
-            emptyOptiFlow();
-
-        } catch (JsonProcessingException e) {
-            e.printStackTrace();
-        }
-    };
-    PeriodicalSocketClientTask.RequestGenerator optRoutingReqGenerator=new PeriodicalSocketClientTask.RequestGenerator() {
-        @Override
-        public String payload() {
-            List<Map<SwitchPair,Long>> traffic=collectedStats.get();
-            if(null==traffic){
-                return null;
-            }
-            TopologyDesc topo=TopologyDesc.getInstance();
-            Map<String,ArrayList<Long>> content=new HashMap<>();
-            for(int f=0;f<Env.N_FLOWS;f++){
-                content.put(String.valueOf(f),new ArrayList<>());
-                ArrayList<Long> stats=content.get(String.valueOf(f));
-                for(int i=0;i<Env.N_SWITCH;i++){
-                    for(int j=0;j<Env.N_SWITCH;j++){
-                        if(i==j) continue;
-                        SwitchPair switchPair = SwitchPair.switchPair(topo.getDeviceId(i),topo.getDeviceId(j));
-                        Long res=traffic.get(f).get(switchPair);
-                        if(res == null) {
-                            logger.info("i:" + String.valueOf(i) + "j:" + j);
-                            res = 0L;
-                        }
-                        stats.add(res);
-                    }
-                }
-            }
-
-//            logger.info(content.toString());
-            JsonObject matrixRes = new JsonObject();
-            JsonArray jsonArray = new JsonArray();
-            for(int f = 0; f < Env.N_FLOWS; f++) {
-                for(Long value : content.get(String.valueOf(f))) {
-                    jsonArray.add(value);
-                }
-            }
-            matrixRes.set("volumes", jsonArray);
-            ObjectMapper mapper=new ObjectMapper();
-            try {
-                JsonNode topoIdx = mapper.readTree(topoIdxJson);
-                int topo_idx = topoIdx.get("topo_idx").asInt();
-                matrixRes.set("topo_idx", topo_idx);
-            } catch (JsonProcessingException e) {
-                e.printStackTrace();
-            }
-            String payload=matrixRes.toString();
-            return payload+"*";
-        }
-    };
-
-    PortStatsCollectTask portRateCollector;
-    PortStatsCollectTask.Consumer portRateConsumer=new PortStatsCollectTask.Consumer() {
-        @Override
-        public void consume(Map<SwitchPair, Long> stats) {
-            portRate.set(stats);
-            long time = new Date().getTime();
-            rateFilePath = "/data/" + String.valueOf(time) + ".rate";
-            rateToFile(portRate, rateFilePath);
-            writeToFile(getAllRate(), "/data/allRate.txt");
-        }
-    };
-
-
-    SocketClientTask.ResponseHandler connectionDownHandler = response -> {
-        //清空优化路由流表项
-        emptyOptiFlow();
-        TopologyDesc topo=TopologyDesc.getInstance();
-        ObjectMapper mapper=new ObjectMapper();
-        try {
-            JsonNode root=mapper.readTree(response);
-            for(int i=0;i<Env.N_FLOWS;i++){
-                JsonNode node=root.get("res" + String.valueOf(i+1));
-                for(int k=0;k<node.size();k++){
-                    JsonNode routing=node.get(k);
-                    int start=routing.get(0).asInt();
-                    int end=routing.get(routing.size()-1).asInt();
-                    for(IpPrefix srcAddr:topo.getConnectedIps(topo.getDeviceId(start))){
-                        for(IpPrefix dstAddr:topo.getConnectedIps(topo.getDeviceId(end))){
-                            for(int j=0;j<routing.size()-1;j++){
-                                int curr=routing.get(j).asInt();
-                                int next=routing.get(j+1).asInt();
-                                DeviceId currDeviceId=topo.getDeviceId(curr);
-                                DeviceId nextHopDeviceId=topo.getDeviceId(next);
-                                PortNumber output=topo.getConnectionPort(currDeviceId,nextHopDeviceId);
-                                if(output.equals(INVALID_PORT)){
-                                    continue;
-                                    //todo log
-                                }
-                                FlowTableEntry entry=new FlowTableEntry();
-                                entry.setDeviceId(currDeviceId)
-                                        .setPriority(FlowEntryPriority.TABLE2_OPT_ROUTING)
-                                        .setTable(2);
-                                entry.filter()
-                                        .setSrcIP(srcAddr)
-                                        .setDstIP(dstAddr)
-                                        .setVlanId(i);
-                                entry.action()
-                                        .setOutput(output);
-                                FlowRule rule = entry.install(flowRuleService);
-                                optiFlowRulesCache.add(rule);
-                            }
-                        }
-                    }
-
-                }
-            }
-            logger.info("---------connection down routing have been installed----------");
-        } catch (JsonProcessingException e) {
-            e.printStackTrace();
-        }
-    };
-
     SocketServerTask listenWebServerTask;
     SocketServerTask.Handler listenWebHandler = payload -> {
         logger.info("!!!!!!!!!!!!!!!!!!!!!!!!");
@@ -420,27 +223,36 @@ public class AppComponent {
             }
             assert dataJson != null;
             int info = dataJson.get("info").asInt();
+
             if(info == 2){
                 try {
-                    TimeUnit.SECONDS.sleep(5);
+                    TimeUnit.SECONDS.sleep(3);
                 } catch (InterruptedException e) {
                     e.printStackTrace();
                 }
                 String loginMac = dataJson.get("loginMac").asText();
+                String switcher = dataJson.get("switcher").asText();
                 isLoginMac.add(MacAddress.valueOf(loginMac));
                 logger.info("mac: " + loginMac + " have been login ----yes----");
                 redirectRootMap.remove(loginMac);
-                Deque<Integer> dijkstraPath = Dijkstra(Env.graph, 9, 0);
-                natRouteToHost(new LinkedList<>(dijkstraPath), loginMac, IpPrefix.valueOf("192.168.1.49/32"),
-                        FlowEntryPriority.NAT_DEFAULT_ROUTING - 5, 1, PortNumber.portNumber(2));
+//                Deque<Integer> dijkstraPath = Dijkstra(Env.graph, Integer.parseInt(switcher), 0);
+//                natRouteToHost(new LinkedList<>(dijkstraPath), loginMac, IpPrefix.valueOf(App.VUE_FRONT_IP + "/32"),
+//                        FlowEntryPriority.NAT_DEFAULT_ROUTING, 1, PortNumber.portNumber(2));
+
             } else if(info == 3) {
                 try {
-                    TimeUnit.SECONDS.sleep(5);
+                    TimeUnit.SECONDS.sleep(3);
                 } catch (InterruptedException e) {
                     e.printStackTrace();
                 }
                 String loginMac = dataJson.get("loginMac").asText();
+                logger.info(isLoginMac.toString());
                 isLoginMac.remove(MacAddress.valueOf(loginMac));
+
+                logger.info(isLoginMac.toString());
+                logger.info("-----mac:" + loginMac + "  have logout success********************");
+
+
             } else if(info == 1) {
                 String srcMac = dataJson.get("srcMac").asText();
                 String dstIP = dataJson.get("dstIP").asText();
@@ -502,16 +314,17 @@ public class AppComponent {
         listenWebServerTask.start();
         logger.info("listen web socket started");
         //只收集入口交换机上的流表
-      /*  flowStaticsCollector = new FlowStaticsCollector(flowRuleService, TopologyDesc.getInstance(),
+        flowStaticsCollector = new FlowStaticsCollector(flowRuleService, TopologyDesc.getInstance(),
                 new int[]{9}, flowStaticsCollectorHandler);
         flowStaticsCollector.setInterval(20);
         flowStaticsCollector.start();
-        logger.info("flowStatics started");*/
+        logger.info("flowStatics started");
 
-        /*dynamicDataCollector = new DynamicDataCollector(flowRuleService, TopologyDesc.getInstance(), dynamicDataCollectorHandler);
-        dynamicDataCollector.setInterval(25);
-        dynamicDataCollector.start();
-        logger.info("dynamic data collect");*/
+
+//        dynamicDataCollector = new DynamicDataCollector(flowRuleService, TopologyDesc.getInstance(), dynamicDataCollectorHandler);
+//        dynamicDataCollector.setInterval(25);
+//        dynamicDataCollector.start();
+//        logger.info("dynamic data collect");
 
     }
     @Deactivate
@@ -532,175 +345,20 @@ public class AppComponent {
      * 初始化系统启动所需的相关方法.
      */
     void init() {
-
-        //在table0 安装与host直连switch的默认路由
-//        installFlowEntryToEndSwitch(0);
-        logger.info("Flow entry for end host installed");
-//        installFlowEntryToNatSwitch();
-//        //在table0 安装已经打标签的流的流表
-//        installFlowEntryForLabelledTraffic();
-//        logger.info("Flow entry for labelled traffic installed");
-//        //在table0 安装默认流表
-//        installDefaultFlowEntryToTable0();
-//        logger.info("Flow entry for default traffic installed");
-//        //安装table1 用于统计流量矩阵
-//        installFlowEntryForMatrixCollection();
-//        logger.info("Flow entry for traffic matrix collection installed");
-
-        //安装IP到table2的流表项
-//        installDefaultRoutingToTable2();
-//        installDropActionToTable2();
-//        logger.info("Flow entry for drop packet installed");
-
-
-        //每隔1s统计一次接入端口流数据
-//        storeFlowRateMission();
-//        getMatrixMission();
+        logger.info("init function");
     }
 
     void installFlowEntryToEndSwitch(int endSwitchId, String dstIP) {
-//        for(Device device:deviceService.getAvailableDevices()){
-//            for(Host host:hostService.getConnectedHosts(device.id())) {
-//                for(IpAddress ipAddr:host.ipAddresses()){
-//                    PortNumber output=host.location().port();
-
-                    FlowTableEntry entry=new FlowTableEntry();
-                    entry.setTable(0)
-                            .setPriority(FlowEntryPriority.TABLE0_HANDLE_LAST_HOP)
-                            .setDeviceId(TopologyDesc.getInstance().getDeviceId(endSwitchId));
-                    entry.filter()
-                            .setDstIP(IpPrefix.valueOf(dstIP + "/32"));
-                    entry.action()
-                            .setOutput(PortNumber.portNumber("1"));
-                    entry.install(flowRuleService);
-
-
-//        FlowTableEntry entry2=new FlowTableEntry();
-//        entry2.setTable(0)
-//                .setPriority(FlowEntryPriority.TABLE0_HANDLE_LAST_HOP)
-//                .setDeviceId(TopologyDesc.getInstance().getDeviceId(9));
-//        entry2.filter()
-//                .setDstIP(IpPrefix.valueOf("10.0.0.20/32"));
-//        entry2.action()
-//                .setOutput(PortNumber.portNumber("2"));
-//        entry2.install(flowRuleService);
-//                }
-//            }
-//        }
-        logger.debug("Host connection flow installed");
-    }
-
-
-    void installFlowEntryToNatSwitch() {
-        DeviceId deviceId = TopologyDesc.getInstance().getDeviceId(0);
         FlowTableEntry entry=new FlowTableEntry();
-        entry.setPriority(FlowEntryPriority.TABLE0_NAT_FLOW)
-                .setTable(0)
-                .setDeviceId(deviceId);
-//        entry.filter()
-//                .setDstIP(IpPrefix.valueOf("192.168.5.1/16"));
+        entry.setTable(0)
+                .setPriority(FlowEntryPriority.TABLE0_HANDLE_LAST_HOP)
+                .setDeviceId(TopologyDesc.getInstance().getDeviceId(endSwitchId));
+        entry.filter()
+                .setDstIP(IpPrefix.valueOf(dstIP + "/32"));
         entry.action()
-                .setOutput(PortNumber.portNumber("2"));
+                .setOutput(PortNumber.portNumber("1"));
         entry.install(flowRuleService);
-    }
-
-    void installFlowEntryForLabelledTraffic(){
-        for(Device device:deviceService.getAvailableDevices()){
-            Set<Host> hosts=hostService.getConnectedHosts(device.id());
-            for(int vlanId = 0; vlanId< Env.N_FLOWS; vlanId++){
-                FlowTableEntry entry=new FlowTableEntry();
-                entry.setPriority(FlowEntryPriority.TABLE0_HANDLE_TAGGED_FLOW)
-                        .setTable(0)
-                        .setDeviceId(device.id());
-                entry.filter()
-                        .setVlanId(vlanId);
-                entry.action()
-                        .setTransition(1);
-                for(Host host:hosts){
-                    for(IpAddress addr:host.ipAddresses()){
-                        entry.filter()
-                                .setSrcIP(addr.toIpPrefix());
-                        entry.install(flowRuleService);
-                    }
-                }
-
-            }
-        }
-    }
-    void installDefaultFlowEntryToTable0(){
-        for(Device device:deviceService.getAvailableDevices()){
-            FlowTableEntry entry=new FlowTableEntry();
-            entry.setTable(0)
-                    .setPriority(FlowEntryPriority.TABLE0_DEFAULT)
-                    .setDeviceId(device.id());
-            entry.action()
-                    .setTransition(2);
-            entry.install(flowRuleService);
-        }
-    }
-
-    void installDefaultRoutingToTable2(){
-        TopologyDesc topo=TopologyDesc.getInstance();
-        String req="{ \"topo_idx\" : 0}*";
-        SocketClientTask.ResponseHandler responseHandler = payload -> {
-//            logger.info(payload);
-            try{
-                ObjectMapper mapper=new ObjectMapper();
-                JsonNode root=mapper.readTree(payload);
-                JsonNode routings=root.get("res1");
-                for(int i=0;i<routings.size();i++){
-                    JsonNode routing=routings.get(i);
-                    int start=routing.get(0).asInt();
-                    int end=routing.get(routing.size()-1).asInt();
-                    for(IpPrefix srcAddr:topo.getConnectedIps(topo.getDeviceId(start))){
-                        for(IpPrefix dstAddr:topo.getConnectedIps(topo.getDeviceId(end))){
-                            for(int j=0;j<routing.size()-1;j++){
-                                int curr=routing.get(j).asInt();
-                                int next=routing.get(j+1).asInt();
-                                DeviceId currDeviceId=topo.getDeviceId(curr);
-                                DeviceId nextHopDeviceId=topo.getDeviceId(next);
-                                PortNumber output=topo.getConnectionPort(currDeviceId,nextHopDeviceId);
-                                if(output.equals(INVALID_PORT)){
-                                    continue;
-                                    //todo log
-                                }
-                                FlowTableEntry entry=new FlowTableEntry();
-                                entry.setDeviceId(currDeviceId)
-                                        .setPriority(FlowEntryPriority.TABLE2_DEFAULT_ROUTING)
-                                        .setTable(2);
-                                entry.filter()
-                                        .setSrcIP(srcAddr)
-                                        .setDstIP(dstAddr);
-                                entry.action()
-                                        .setOutput(output);
-                                FlowRule rule = entry.install(flowRuleService);
-                                defaultFlowRulesCache.add(rule);
-                            }
-                        }
-                    }
-
-
-                }
-
-
-            }
-            catch (JsonProcessingException e) {
-                e.printStackTrace();
-            }
-        };
-        SocketClientTask task=new SocketClientTask(req, responseHandler,App.DEFAULT_ROUTING_IP,App.DEFAULT_ROUTING_PORT);
-        task.start();
-    }
-    void installDropActionToTable2(){
-        for(Device device:deviceService.getAvailableDevices()){
-            FlowTableEntry entry=new FlowTableEntry();
-            entry.setDeviceId(device.id())
-                    .setPriority(FlowEntryPriority.TABLE2_DROP)
-                    .setTable(2);
-            entry.action()
-                    .setDrop(true);
-            entry.install(flowRuleService);
-        }
+        logger.debug("Host connection flow installed");
     }
 
     /**
@@ -730,172 +388,6 @@ public class AppComponent {
         }
         logger.info("---------have emptyed the optimize flowEntries----------------");
     }
-
-    public Double getCurrentMaxRate() {
-        long max = 0L;
-        Map<SwitchPair, Long> map = portRate.get();
-        if(null == map) {
-            return 0.0;
-        }
-        for(long rate : map.values()) {
-            max = Math.max(max, rate);
-        }
-        return max * 8 / 1000000.0;
-    }
-
-    public String getAllRate() {
-        ArrayList<Double> res = new ArrayList<>();
-        Map<SwitchPair, Long> map = portRate.get();
-        if(null == map) {
-            return "";
-        }
-        for(long rate : map.values()) {
-            res.add(rate * 8/ 1000000.0);
-        }
-        Collections.sort(res);
-        return res.toString();
-    }
-
-    public void optiCondition() {
-       /* PeriodicalSocketClientTask optRoutingRequestTask = new PeriodicalSocketClientTask(App.OPT_ROUTING_IP,
-                App.OPT_ROUTING_PORT, optRoutingReqGenerator, optRoutingRespHandler);
-        optRoutingRequestTask.setDelay(120).setInterval(200);
-        optRoutingRequestTask.start();*/
-    }
-
-    /**
-     * 模拟链路断掉，将断掉链路信息传输给算法模块，并下发新的路由.
-     * @param downList
-     */
-    public void connectionDownReq(List<Integer> downList) {
-        JsonObject sendInfo = new JsonObject();
-        JsonArray jsonArray = new JsonArray();
-        for(int i : downList) {
-            jsonArray.add(i);
-        }
-        sendInfo.set("disconnectEdge", jsonArray);
-        ObjectMapper mapper=new ObjectMapper();
-        try {
-            JsonNode topoIdx = mapper.readTree(topoIdxJson);
-            int topo_idx = topoIdx.get("topo_idx").asInt();
-            sendInfo.set("topo_idx", topo_idx);
-        } catch (JsonProcessingException e) {
-            e.printStackTrace();
-        }
-        String payload = sendInfo.toString() + "*";
-        SocketClientTask connectionDownTask = new SocketClientTask(payload, connectionDownHandler,
-                App.C_DOWN_ROUTING_IP, App.C_DOWN_ROUTING_PORT);
-        connectionDownTask.start();
-    }
-
-    /**
-     * 一直等待topo发现完全.
-     */
-    void waitTopoDiscover() {
-        int topoId = 0;
-        int linksCount = 0;
-        logger.info("---------------discover topo waiting.....-----------------------");
-        while (true) {
-            linksCount = topologyService.currentTopology().linkCount();
-            try {
-                JsonNode jsonNode = new ObjectMapper().readTree(topoIdxJson);
-                topoId = jsonNode.get("topo_idx").intValue();
-            } catch (Exception e) {
-                e.printStackTrace();
-            }
-            if (topoId % 2 == 0) {
-                if (linksCount == 202) {
-                    break;
-                }
-            } else {
-                if (linksCount == 212) {
-                    break;
-                }
-            }
-            try {
-                Thread.sleep(50);
-            } catch (InterruptedException e) {
-                e.printStackTrace();
-            }
-        }
-        logger.info("--------topo discover complete------------");
-    }
-
-    public void rateToFile(AtomicReference<Map<SwitchPair,Long>> portRate, String path) {
-        Map<SwitchPair, Long> map = portRate.get();
-        if(null == map) {
-            return;
-        }
-        Set<SwitchPair> switchPairs = map.keySet();
-        for(SwitchPair switchPair : switchPairs) {
-            DeviceId src = switchPair.src;
-            DeviceId dst = switchPair.dst;
-            TopologyDesc topologyDesc = TopologyDesc.getInstance();
-            Integer srcId = topologyDesc.deviceIDToSwitchID.get(src);
-            Integer dstId = topologyDesc.deviceIDToSwitchID.get(dst);
-            Long aLong = map.get(switchPair);
-            String out = srcId + " " + dstId + " " + aLong;
-            writeToFile(out, path);
-        }
-    }
-
-    /**
-     * 把信息输出到文件.
-     * @param content
-     */
-    public void writeToFile(String content, String filePath) {
-        try {
-            File file = new File(filePath);
-            if(!file.exists()){
-                file.createNewFile();
-            }
-            FileWriter fileWriter = new FileWriter(file.getAbsoluteFile(), true);
-            BufferedWriter bw = new BufferedWriter(fileWriter);
-            /*SimpleDateFormat df = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
-            String format = df.format(new Date());
-            String out = format + "-->>" + content + "\n";
-            bw.write(out);*/
-            bw.write(content + "\n");
-            bw.close();
-//            log.info("finished write to file");
-        } catch (IOException e) {
-            logger.error(e.toString());
-        }
-    }
-
-    public void writeTimeHeaderToFile(String filePath) {
-        SimpleDateFormat df = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
-        String format = df.format(new Date());
-        writeToFile(format, filePath);
-    }
-
-    private void installFlowEntryForMatrixCollection() {
-        for(Host srcHost:TopologyDesc.getInstance().getHosts()){
-            DeviceId switchID=srcHost.location().deviceId();
-            for(Host dstHost:TopologyDesc.getInstance().getHosts()){
-                if(!srcHost.equals(dstHost)){
-                    for(IpAddress srcIp:srcHost.ipAddresses()){
-                        for(IpAddress dstIp:dstHost.ipAddresses()){
-                            for(int vlanId=0;vlanId<Env.N_FLOWS;vlanId++){
-                                FlowTableEntry entry=new FlowTableEntry();
-                                entry.setDeviceId(switchID)
-                                        .setTable(1)
-                                        .setPriority(FlowEntryPriority.TABLE1_MATRIX_COLLECTION);
-                                entry.filter()
-                                        .setSrcIP(srcIp.toIpPrefix())
-                                        .setDstIP(dstIp.toIpPrefix())
-                                        .setVlanId(vlanId);
-                                entry.action()
-                                        .setTransition(2);
-                                entry.install(flowRuleService);
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
 
     public static Deque<Integer> Dijkstra(int[][] graph, int src, int dst) {
         int n = graph.length;
@@ -955,8 +447,6 @@ public class AppComponent {
         data.clear();
         data.put(outdata);
         context.send();
-//        packetService.emit(context.outPacket());
-//        logger.info("out to switcher");
     }
 
 
@@ -1077,7 +567,6 @@ public class AppComponent {
 
     }
 
-
     public void hostRouteToNat(Deque<Integer> path, int flowPriority) {
         hostRouteToNat(path, null, flowPriority, 1, null);
     }
@@ -1171,19 +660,6 @@ public class AppComponent {
 
     }
 
-    public void installFlowEndSwitchToHost(MacAddress hostMac, DeviceId deviceId, PortNumber port) {
-        FlowTableEntry entry=new FlowTableEntry();
-        entry.setTable(0)
-                .setPriority(FlowEntryPriority.TABLE0_HANDLE_LAST_HOP)
-                .setDeviceId(deviceId);
-        entry.filter()
-                .setDstMac(hostMac);
-        entry.action()
-                .setOutput(port);
-        entry.install(flowRuleService);
-    }
-
-
     /**
      * Request packet in via packet service.
      */
@@ -1192,7 +668,6 @@ public class AppComponent {
         selector.matchEthType(Ethernet.TYPE_IPV4);
         packetService.requestPackets(selector.build(), PacketPriority.REACTIVE, App.appId);
     }
-
 
     /**
      * Packet processor responsible for forwarding packets along their paths.
@@ -1282,8 +757,6 @@ public class AppComponent {
                             tcpPayload.resetChecksum();
                             ipPayload.resetChecksum();
                             packetOut(context,  ethPkt.serialize(), PortNumber.TABLE);
-    //                        redirectMap.remove(key);
-                            logger.info(key + "  have been removed");
                             return;
                         }
                     }
@@ -1297,12 +770,13 @@ public class AppComponent {
     //                    installFlowEndSwitchToHost(macAddress, deviceId, port);
                         Deque<Integer> dijkstraPath = Dijkstra(Env.graph, srcId, 0);
                         logger.info(dijkstraPath.toString());
-                        //配置到dns服务器的连通
-                        natRouteToHost(new LinkedList<>(dijkstraPath), macAddress.toString(), IpPrefix.valueOf("114.114.114.114/32"), FlowEntryPriority.NAT_DEFAULT_ROUTING, 1, port);
-    //                hostRouteToNat(new LinkedList<>(dijkstraPath), FlowEntryPriority.NAT_DEFAULT_ROUTING);
-                        hostRouteToNat(new LinkedList<>(dijkstraPath), IpPrefix.valueOf("114.114.114.114/32"), FlowEntryPriority.NAT_DEFAULT_ROUTING, 1, null);
 
-                        hostRouteToNat(new LinkedList<>(dijkstraPath), IpPrefix.valueOf("192.168.1.49/32"), FlowEntryPriority.NAT_DEFAULT_ROUTING - 5, 1, null);
+                        //配置到dns服务器的连通
+                        natRouteToHost(new LinkedList<>(dijkstraPath), macAddress.toString(), IpPrefix.valueOf(App.DNS_IP + "/32"), FlowEntryPriority.DNS_DEFAULT_ROUTING, 1, port);
+    //                hostRouteToNat(new LinkedList<>(dijkstraPath), FlowEntryPriority.NAT_DEFAULT_ROUTING);
+                        hostRouteToNat(new LinkedList<>(dijkstraPath), IpPrefix.valueOf(App.DNS_IP + "/32"), FlowEntryPriority.DNS_DEFAULT_ROUTING, 1, null);
+
+                        hostRouteToNat(new LinkedList<>(dijkstraPath), IpPrefix.valueOf(App.VUE_FRONT_IP + "/32"), FlowEntryPriority.NAT_DEFAULT_ROUTING, 1, null);
     //                    natRouteToHost(new LinkedList<>(dijkstraPath), macAddress.toString(), IpPrefix.valueOf("192.168.1.49/32"), FlowEntryPriority.NAT_DEFAULT_ROUTING - 5, 1, port);
                         macAddrSet.add(macAddress);
 
@@ -1324,14 +798,13 @@ public class AppComponent {
 //                        if(redirectMap.containsKey(key)) {
 //                            return;
 //                        }
-                        ipPayload.setDestinationAddress("192.168.1.49");
+                        ipPayload.setDestinationAddress(App.VUE_FRONT_IP);
 
 //                        logger.info(ethPkt.getDestinationMAC().toString());
                         tcpPayload.resetChecksum();
                         ipPayload.resetChecksum();
                         redirectMap.put(key, value);
                         redirectRootMap.put(macAddress.toString(), redirectMap);
-                        logger.info("***********************************");
                         Deque<Integer> dijkstraPath = Dijkstra(Env.graph, srcId, 0);
                         natRouteToHost(new LinkedList<>(dijkstraPath), macAddress.toString(), IpPrefix.valueOf(dstIP + "/32"), FlowEntryPriority.NAT_DEFAULT_ROUTING, 2, port);
                         packetOut(context, ethPkt.serialize(),PortNumber.TABLE);
@@ -1386,57 +859,8 @@ public class AppComponent {
 
             //packet in 的包不是IP包
             logger.info("other  packet in message");
-
-/*            if(ethPkt.getEtherType() == Ethernet.TYPE_IPV4) {
-                logger.info("*********************************************");
-                logger.info(pkt.receivedFrom().toString());
-                //第一次packetIn会默认配置到网关的路由
-                if(!macAddrSet.contains(macAddress)) {
-                    logger.info("source mac addr:" + macAddress);
-                    logger.info("install the routing to gate");
-                    DeviceId deviceId = pkt.receivedFrom().deviceId();
-                    int srcId = TopologyDesc.getInstance().getDeviceIdx(deviceId);
-                    logger.info("srcid:" + srcId);
-                    PortNumber port = pkt.receivedFrom().port();
-
-                    installFlowEndSwitchToHost(macAddress, deviceId, port);
-                    Deque<Integer> dijkstraPath = Dijkstra(Env.graph, srcId, 0);
-                    logger.info(dijkstraPath.toString());
-                    natRouteToHost(new LinkedList<>(dijkstraPath), macAddress.toString(),FlowEntryPriority.NAT_DEFAULT_ROUTING, 1);
-//                hostRouteToNat(new LinkedList<>(dijkstraPath), FlowEntryPriority.NAT_DEFAULT_ROUTING);
-                    hostRouteToNat(new LinkedList<>(dijkstraPath), IpPrefix.valueOf("192.168.1.136/24"), FlowEntryPriority.NAT_DEFAULT_ROUTING, 1, null);
-                    macAddrSet.add(macAddress);
-                }
-
-                MacAddress destinationMAC = ethPkt.getDestinationMAC();
-                DeviceId deviceId = pkt.receivedFrom().deviceId();
-                int deviceIdx = TopologyDesc.getInstance().getDeviceIdx(deviceId);
-                String param = "src=" + macAddress + "&dst=" + destinationMAC + "&switcher=" + deviceIdx;
-                logger.info(param);
-                String sr= sendPost("http://192.168.1.136:8888/user/verifyByMac", param);
-                logger.info(sr);
-            }*/
         }
 
-    }
-
-
-
-    public String logContext(PacketContext context) {
-        Ethernet parsed = context.inPacket().parsed();
-
-        IPacket iPacket = parsed.getPayload();
-        short vlanID = parsed.getVlanID();
-        MacAddress sourceMAC = parsed.getSourceMAC();
-        MacAddress destinationMAC = parsed.getDestinationMAC();
-        IPv4 ipPayload = (IPv4) iPacket;
-        IpAddress srcIP = IpAddress.valueOf(ipPayload.getSourceAddress());
-        IpAddress dstIP = IpAddress.valueOf(ipPayload.getDestinationAddress());
-        TCP tcpPayload =  (TCP) ipPayload.getPayload();
-        int srcPort = tcpPayload.getSourcePort();
-        int dstPort = tcpPayload.getDestinationPort();
-        String out = "vlanid: " + vlanID + "  srcMac" + sourceMAC + "  dstMac" + destinationMAC + "src:" + srcIP + "----->" + "dst:" + dstIP + "  srcport:" + srcPort + "  dstposrt:" + dstPort;
-        return out;
     }
 
     private class ResourceRouteTask extends AbstractStoppableTask {

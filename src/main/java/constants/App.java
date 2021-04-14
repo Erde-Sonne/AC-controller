@@ -22,30 +22,15 @@ public class App {
     public ScheduledExecutorService getScheduledPool(){
         return scheduledPool;
     }
-    public static final String CLASSIFIER_LISTENING_IP="0.0.0.0";
-    public static final int CLASSIFIER_LISTENING_PORT=1050;
 
-    public static final String TOPO_IDX_IP = "0.0.0.0";
-    public static final int TOPO_IDX_PORT = 1051;
+    public static final String WEB_LISTENING_IP = "0.0.0.0";
+    public static final int WEB_LISTENING_PORT = 1060;
 
-    public static final String ALG_CLASSIFIER_IP="192.168.1.196";
-    public static final int ALG_CLASSIFIER_PORT=1052;
+    public static final String Server_IP = "192.168.1.49";
+    public static final int Server_PORT = 1061;
 
-    public static final String DEFAULT_ROUTING_IP="192.168.1.196";
-    public static final int DEFAULT_ROUTING_PORT=1053;
+    public static final String DNS_IP = "114.114.114.114";
 
-    public static final String OPT_ROUTING_IP="192.168.1.196";
-    public static final int OPT_ROUTING_PORT=1053;
-
-    public static final String C_DOWN_ROUTING_IP="192.168.1.196";
-    public static final int C_DOWN_ROUTING_PORT=1053;
-
-
-
-    public static final String WEB_LISTENING_IP="0.0.0.0";
-    public static final int WEB_LISTENING_PORT=1060;
-
-    public static final String Server_IP="192.168.1.49";
-    public static final int Server_PORT=1061;
+    public static final String VUE_FRONT_IP = "192.168.1.49";
 }
 

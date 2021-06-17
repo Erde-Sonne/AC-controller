@@ -9,7 +9,7 @@ import java.util.concurrent.ScheduledExecutorService;
 
 public class App {
     public static ApplicationId appId;
-    ExecutorService pool= Executors.newCachedThreadPool();
+    ExecutorService pool= Executors.newFixedThreadPool(50);
     ScheduledExecutorService scheduledPool=Executors.newScheduledThreadPool(10);
     static App instance=new App();
     private App(){}
@@ -32,5 +32,6 @@ public class App {
     public static final String DNS_IP = "114.114.114.114";
 
     public static final String VUE_FRONT_IP = "192.168.1.49";
-}
 
+    public static final int FLOW_TIMEOUT = 60;
+}

@@ -59,7 +59,6 @@ public class FlowStaticsCollector extends PeriodicalTask {
                     IPProtocolCriterion protocolCriterion = (IPProtocolCriterion) selector.getCriterion(Criterion.Type.IP_PROTO);
                     TcpPortCriterion srcPortCriterion = (TcpPortCriterion) selector.getCriterion(Criterion.Type.TCP_SRC);
                     TcpPortCriterion dstPortCriterion = (TcpPortCriterion) selector.getCriterion(Criterion.Type.TCP_DST);
-
                     long time = new Date().getTime();
                     long packets = entry.packets();
                     long bytes = entry.bytes();

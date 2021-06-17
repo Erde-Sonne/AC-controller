@@ -1,11 +1,7 @@
 package apps.smartfwd.src.main.java.task;
 
 import apps.smartfwd.src.main.java.task.base.AbstractStoppableTask;
-import apps.smartfwd.src.main.java.utils.MQDict;
 import apps.smartfwd.src.main.java.utils.Producer;
-import org.apache.kafka.clients.producer.Callback;
-import org.apache.kafka.clients.producer.ProducerRecord;
-import org.apache.kafka.clients.producer.RecordMetadata;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -74,7 +70,7 @@ public class SocketClientTask extends AbstractStoppableTask {
      * @param topic
      * @param data
      */
-    public static void sendToKafka(String topic, String data) {
+/*    public static void sendToKafka(String topic, String data) {
         ProducerRecord<String , String> record = new ProducerRecord<String, String>(topic, data);
         //发送消息
         Producer.producer.send(record, new Callback() {
@@ -85,7 +81,7 @@ public class SocketClientTask extends AbstractStoppableTask {
                 }
             }
         });
-    }
+    }*/
 
     /**
      * 向指定 URL 发送POST方法的请求

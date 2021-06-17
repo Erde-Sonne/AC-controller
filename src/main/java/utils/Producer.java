@@ -1,25 +1,19 @@
 package apps.smartfwd.src.main.java.utils;
 
-import org.apache.kafka.clients.producer.Callback;
-import org.apache.kafka.clients.producer.KafkaProducer;
-import org.apache.kafka.clients.producer.ProducerConfig;
-import org.apache.kafka.clients.producer.ProducerRecord;
-import org.apache.kafka.clients.producer.RecordMetadata;
-import org.apache.kafka.common.serialization.StringSerializer;
 
 import java.util.Properties;
 
 
 public class Producer {
 
-    public static final KafkaProducer<String,String> producer;
+//    public static final KafkaProducer<String,String> producer;
 
     /*
     初始化生产者
      */
     static {
         Properties configs = initConfig();
-        producer = new KafkaProducer<String, String>(configs);
+//        producer = new KafkaProducer<String, String>(configs);
     }
 
     /*
@@ -39,21 +33,21 @@ public class Producer {
 
     public static void main(String[] args) throws InterruptedException {
         //消息实体
-        ProducerRecord<String , String> record = null;
-        for (int i = 0; i < 100; i++) {
-            record = new ProducerRecord<String, String>(MQDict.PRODUCER_TOPICA, "value"+i);
-            //发送消息
-            producer.send(record, new Callback() {
-                @Override
-                public void onCompletion(RecordMetadata recordMetadata, Exception e) {
-                    if (null != e){
-                        e.printStackTrace();
-                    }else {
-                        System.out.println(String.format("offset:%s,partition:%s",recordMetadata.offset(),recordMetadata.partition()));
-                    }
-                }
-            });
-        }
-        producer.close();
+//        ProducerRecord<String , String> record = null;
+//        for (int i = 0; i < 100; i++) {
+//            record = new ProducerRecord<String, String>(MQDict.PRODUCER_TOPICA, "value"+i);
+//            //发送消息
+//            producer.send(record, new Callback() {
+//                @Override
+//                public void onCompletion(RecordMetadata recordMetadata, Exception e) {
+//                    if (null != e){
+//                        e.printStackTrace();
+//                    }else {
+//                        System.out.println(String.format("offset:%s,partition:%s",recordMetadata.offset(),recordMetadata.partition()));
+//                    }
+//                }
+//            });
+//        }
+//        producer.close();
     }
 }

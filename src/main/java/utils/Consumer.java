@@ -1,8 +1,7 @@
 package apps.smartfwd.src.main.java.utils;
 
-import org.apache.kafka.clients.consumer.KafkaConsumer;
-import org.apache.kafka.common.serialization.StringDeserializer;
 
+import com.fasterxml.jackson.databind.deser.std.StringDeserializer;
 
 import java.util.Arrays;
 import java.util.Properties;
@@ -10,16 +9,16 @@ import java.util.Properties;
 
 public class Consumer {
 
-    public static final KafkaConsumer<String,String> consumer;
+//    public static final KafkaConsumer<String,String> consumer;
 
     /**
      *  初始化消费者s
      */
-    static {
-        Properties configs = initConfig();
-        consumer = new KafkaConsumer<String, String>(configs);
-        consumer.subscribe(Arrays.asList(MQDict.CONSUMER_TOPICB));
-    }
+//    static {
+//        Properties configs = initConfig();
+//        consumer = new KafkaConsumer<String, String>(configs);
+//        consumer.subscribe(Arrays.asList(MQDict.CONSUMER_TOPICB));
+//    }
     /**
      *  初始化配置
      */

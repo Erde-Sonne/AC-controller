@@ -3,8 +3,6 @@ package apps.smartfwd.src.main.java.task;
 import apps.smartfwd.src.main.java.task.base.AbstractStoppableTask;
 import apps.smartfwd.src.main.java.utils.Consumer;
 import apps.smartfwd.src.main.java.utils.MQDict;
-import org.apache.kafka.clients.consumer.ConsumerRecord;
-import org.apache.kafka.clients.consumer.ConsumerRecords;
 import java.util.concurrent.BlockingQueue;
 
 public class KafkaListenerTask extends AbstractStoppableTask {
@@ -15,7 +13,7 @@ public class KafkaListenerTask extends AbstractStoppableTask {
     }
     @Override
     public void run() {
-        isRunning.set(true);
+/*        isRunning.set(true);
         while (!stopRequested) {
             try {
                 ConsumerRecords<String, String> recordsA = Consumer.consumer.poll(MQDict.CONSUMER_POLL_TIME_OUT);
@@ -33,6 +31,6 @@ public class KafkaListenerTask extends AbstractStoppableTask {
                 stopRequested = true;
             }
         }
-        isRunning.set(false);
+        isRunning.set(false);*/
     }
 }

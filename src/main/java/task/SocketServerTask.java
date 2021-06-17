@@ -2,6 +2,7 @@ package apps.smartfwd.src.main.java.task;
 
 
 
+import apps.smartfwd.src.main.java.constants.App;
 import apps.smartfwd.src.main.java.task.base.AbstractStoppableTask;
 
 import java.io.IOException;
@@ -57,7 +58,9 @@ public class SocketServerTask extends AbstractStoppableTask {
                             stringBuilder.append(res);
                         }
                         String payload = stringBuilder.toString();
-                        handler.handle(payload);
+                        App.getInstance().getPool().submit(()-> {
+                            handler.handle(payload);
+                        });
                         channel.close();
                     }
                 }

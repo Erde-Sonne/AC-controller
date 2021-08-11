@@ -430,6 +430,9 @@ public class AppComponent {
 
     void installFlowEntryToEndSwitch() {
         for(Device device:deviceService.getAvailableDevices()){
+            if(device.id().toString().equals(TopologyDesc.getInstance().getDeviceId(App.ACCESSID).toString())) {
+                continue;
+            }
             for(Host host:hostService.getConnectedHosts(device.id())) {
                 for(IpAddress ipAddr:host.ipAddresses()){
                     PortNumber output=host.location().port();
@@ -747,6 +750,76 @@ public class AppComponent {
 
     }
 
+    /**
+     *下发改IP的流表
+     */
+    public void mendPacket(Ethernet ethPkt) {
+        MacAddress macAddress = ethPkt.getSourceMAC();
+        IPv4 ipPayload = (IPv4) ethPkt.getPayload();
+        IpAddress srcIP = IpAddress.valueOf(ipPayload.getSourceAddress());
+        IpAddress dstIP = IpAddress.valueOf(ipPayload.getDestinationAddress());
+        Map<String, String> redirectMap = redirectRootMap.getOrDefault(macAddress.toString(), new ConcurrentHashMap<>());
+        TCP tcpPayload =  (TCP) ipPayload.getPayload();
+        int srcPort = tcpPayload.getSourcePort();
+        String key = srcIP + "->" + srcPort;
+        String value = dstIP.toString();
+        ipPayload.setDestinationAddress(App.VUE_FRONT_IP);
+        redirectMap.put(key, value);
+        redirectRootMap.put(macAddress.toString(), redirectMap);
+
+        DefaultFlowRule.Builder ruleBuilder=DefaultFlowRule.builder();
+        TrafficSelector.Builder selectorBuilder= DefaultTrafficSelector.builder();
+        selectorBuilder.matchEthType(Ethernet.TYPE_IPV4);
+        selectorBuilder.matchIPProtocol(IPv4.PROTOCOL_TCP);
+        selectorBuilder.matchTcpSrc(TpPort.tpPort(srcPort));
+        selectorBuilder.matchIPSrc(IpPrefix.valueOf(srcIP + "/32"));
+
+        TrafficTreatment.Builder trafficBuilder=DefaultTrafficTreatment.builder();
+        trafficBuilder.setIpDst(IpAddress.valueOf(App.VUE_FRONT_IP));
+        trafficBuilder.setOutput(PortNumber.portNumber(2));
+
+        ruleBuilder.withSelector(selectorBuilder.build())
+                .withTreatment(trafficBuilder.build())
+                .withIdleTimeout(5)
+                .withPriority(61000)
+                .forTable(0)
+                .fromApp(App.appId);
+        ruleBuilder.forDevice(TopologyDesc.getInstance().getDeviceId(App.ACCESSID));
+        FlowRuleOperations.Builder flowRuleOpBuilder=FlowRuleOperations.builder();
+        FlowRule build = ruleBuilder.build();
+        flowRuleOpBuilder.add(build);
+        flowRuleService.apply(flowRuleOpBuilder.build());
+
+
+
+        DefaultFlowRule.Builder ruleBuilder1=DefaultFlowRule.builder();
+        TrafficSelector.Builder selectorBuilder1= DefaultTrafficSelector.builder();
+        selectorBuilder1.matchEthType(Ethernet.TYPE_IPV4);
+        selectorBuilder1.matchIPProtocol(IPv4.PROTOCOL_TCP);
+        selectorBuilder1.matchTcpDst(TpPort.tpPort(srcPort));
+        selectorBuilder1.matchIPDst(IpPrefix.valueOf(srcIP + "/32"));
+
+        TrafficTreatment.Builder trafficBuilder1=DefaultTrafficTreatment.builder();
+        trafficBuilder1.setIpSrc(dstIP);
+        trafficBuilder1.setOutput(PortNumber.portNumber(1));
+
+        ruleBuilder1.withSelector(selectorBuilder1.build())
+                .withTreatment(trafficBuilder1.build())
+                .withIdleTimeout(5)
+                .withPriority(61000)
+                .forTable(0)
+                .fromApp(App.appId);
+        ruleBuilder1.forDevice(TopologyDesc.getInstance().getDeviceId(App.ACCESSID));
+        FlowRuleOperations.Builder flowRuleOpBuilder1=FlowRuleOperations.builder();
+        FlowRule build1 = ruleBuilder1.build();
+        flowRuleOpBuilder1.add(build1);
+        flowRuleService.apply(flowRuleOpBuilder1.build());
+
+    }
+
+
+
+
     public void mendPacket(PacketContext context, Ethernet ethPkt, int srcId, PortNumber port) {
         MacAddress macAddress = ethPkt.getSourceMAC();
         IPv4 ipPayload = (IPv4) ethPkt.getPayload();
@@ -934,7 +1007,7 @@ public class AppComponent {
                         hostRouteToNat(new LinkedList<>(dijkstraPath), IpPrefix.valueOf(App.DNS_IP + "/32"), FlowEntryPriority.DNS_DEFAULT_ROUTING, 1, null);
 
                         hostRouteToNat(new LinkedList<>(dijkstraPath), IpPrefix.valueOf(App.VUE_FRONT_IP + "/32"), FlowEntryPriority.NAT_DEFAULT_ROUTING, 1, null);
-//                        natRouteToHost(new LinkedList<>(dijkstraPath), macAddress.toString(), IpPrefix.valueOf(App.VUE_FRONT_IP + "/32"), FlowEntryPriority.NAT_DEFAULT_ROUTING - 5, 1, port);
+                        natRouteToHost(new LinkedList<>(dijkstraPath), macAddress.toString(), IpPrefix.valueOf(App.VUE_FRONT_IP + "/32"), FlowEntryPriority.NAT_DEFAULT_ROUTING - 5, 1, port);
                         macAddrSet.add(macAddress);
                         try {
                             TimeUnit.SECONDS.sleep(2);
@@ -949,7 +1022,8 @@ public class AppComponent {
 
                     //修改包强转到认证页面
                     if(protocol == IPv4.PROTOCOL_TCP  && srcId == App.ACCESSID) {
-                        mendPacket(context, ethPkt, srcId, port);
+//                        mendPacket(context, ethPkt, srcId, port);
+                        mendPacket(ethPkt);
                     }
                     return;
                 } else {

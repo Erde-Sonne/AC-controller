@@ -2,7 +2,6 @@ package apps.smartfwd.src.main.java.constants;
 
 import org.onosproject.core.ApplicationId;
 
-import javax.xml.crypto.dsig.spec.XSLTTransformParameterSpec;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
@@ -26,12 +25,18 @@ public class App {
     public static final String WEB_LISTENING_IP = "0.0.0.0";
     public static final int WEB_LISTENING_PORT = 1060;
 
-    public static final String Server_IP = "192.168.1.49";
+    public static final String Server_IP = "192.168.1.14";
     public static final int Server_PORT = 1061;
 
     public static final String DNS_IP = "114.114.114.114";
 
-    public static final String VUE_FRONT_IP = "192.168.1.49";
+    public static final String VUE_FRONT_IP = "192.168.1.14";
 
-    public static final int FLOW_TIMEOUT = 60;
+    public static final int FLOW_TIMEOUT = 30;
+
+    public static final int NATID = 0;
+    public static final int ACCESSID = 24;
+
+    public static final int NATPORT = 2;
+    public static final int ACCESSPORT = 1;
 }

@@ -94,10 +94,26 @@ class Action{
     int transition=-1;
     PortNumber output;
     int vlanId=-1;
+    IpAddress srcIP;
+    IpAddress dstIP;
     boolean drop=false;
 
-    public int getTransition() {
-        return transition;
+    public IpAddress getDstIP() {
+        return dstIP;
+    }
+
+    public Action setDstIP(IpAddress dstIP) {
+        this.dstIP = dstIP;
+        return this;
+    }
+
+    public IpAddress getSrcIP() {
+        return srcIP;
+    }
+
+    public Action setSrcIP(IpAddress srcIP) {
+        this.srcIP = srcIP;
+        return this;
     }
 
     public int getVlanId() {
@@ -107,6 +123,11 @@ class Action{
     public Action setVlanId(int vlanId) {
         this.vlanId = vlanId;
         return this;
+    }
+
+
+    public int getTransition() {
+        return transition;
     }
 
     public Action setTransition(int transition) {
@@ -233,28 +254,35 @@ public class FlowTableEntry {
                 selectorBuilder.matchUdpDst(TpPort.tpPort(_filter.dport));
             } 
         }
-
+        //注意,处理项有先后顺序,可以把outport放在最后
         TrafficTreatment.Builder trafficBuilder=DefaultTrafficTreatment.builder();
         if(!_action.drop){
             //set vlanid
             if(-1!=_action.vlanId){
                 trafficBuilder.setVlanId(VlanId.vlanId((short) _action.vlanId));
             }
-            //set output
-            if(null!=_action.output){
-                trafficBuilder.setOutput(_action.output);
+            if(null!=_action.srcIP){
+                trafficBuilder.setIpSrc(_action.srcIP);
+            }
+            if(null!=_action.dstIP){
+                trafficBuilder.setIpDst(_action.dstIP);
             }
             //set transition
             if(-1!=_action.transition){
                 trafficBuilder.transition(_action.transition);
             }
+            //set output
+            if(null!=_action.output){
+                trafficBuilder.setOutput(_action.output);
+            }
+
         }else{
             trafficBuilder.drop();
         }
 
         ruleBuilder.withSelector(selectorBuilder.build())
                 .withTreatment(trafficBuilder.build())
-                .withReason(FlowRule.FlowRemoveReason.IDLE_TIMEOUT)
+//                .withReason(FlowRule.FlowRemoveReason.IDLE_TIMEOUT)
                 .withPriority(priority)
                 .forTable(table)
                 .fromApp(App.appId);

@@ -15,6 +15,7 @@ import org.onosproject.net.flow.*;
     int sport=-1;
     int dport=-1;
     int vlanId=-1;
+    int inport=-1;
 
 
     public IpPrefix getSrcIP() {
@@ -62,6 +63,15 @@ import org.onosproject.net.flow.*;
         return this;
     }
 
+    public int getInport() {
+         return inport;
+    }
+
+    public Filter setInport(int inport) {
+        this.inport = inport;
+        return this;
+    }
+
     public int getSport() {
         return sport;
     }
@@ -97,6 +107,16 @@ class Action{
     IpAddress srcIP;
     IpAddress dstIP;
     boolean drop=false;
+    boolean punt=false;
+
+    public boolean getPunt() {
+        return punt;
+    }
+
+    public Action setPunt(boolean punt) {
+        this.punt = punt;
+        return this;
+    }
 
     public IpAddress getDstIP() {
         return dstIP;
@@ -218,10 +238,11 @@ public class FlowTableEntry {
         if(!check()){
             return null;
         }
-
+        if(-1!=_filter.inport) {
+            selectorBuilder.matchInPort(PortNumber.portNumber(_filter.inport));
+        }
         if(null!=_filter.srcIP){
             selectorBuilder.matchIPSrc(_filter.srcIP);
-                   
         }
         if(null!=_filter.dstIP){
             selectorBuilder.matchIPDst(_filter.dstIP);
@@ -246,14 +267,15 @@ public class FlowTableEntry {
                 selectorBuilder.matchUdpSrc(TpPort.tpPort(_filter.sport));
             }
         }
-        
+
         if(-1!=_filter.dport){
             if(IPv4.PROTOCOL_TCP==_filter.protocol){
                 selectorBuilder.matchTcpDst(TpPort.tpPort(_filter.dport));
             }else{
                 selectorBuilder.matchUdpDst(TpPort.tpPort(_filter.dport));
-            } 
+            }
         }
+
         //注意,处理项有先后顺序,可以把outport放在最后
         TrafficTreatment.Builder trafficBuilder=DefaultTrafficTreatment.builder();
         if(!_action.drop){
@@ -271,11 +293,14 @@ public class FlowTableEntry {
             if(-1!=_action.transition){
                 trafficBuilder.transition(_action.transition);
             }
+            //to controller
+            if(_action.punt) {
+                trafficBuilder.punt();
+            }
             //set output
             if(null!=_action.output){
                 trafficBuilder.setOutput(_action.output);
             }
-
         }else{
             trafficBuilder.drop();
         }

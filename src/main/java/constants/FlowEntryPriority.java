@@ -25,7 +25,10 @@ public class FlowEntryPriority {
     public static final int NAT_DEFAULT_ROUTING=50000;
     public static final int DNS_DEFAULT_ROUTING=60000;
     public static final int INTERNET_ROUTING=48000;
+    public static final int REDIRECT_PACKET=60002;
+    public static final int TO_TABLE1=50005;
 
+    public static final int PICA=60000;
 
 }
 

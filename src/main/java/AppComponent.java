@@ -53,12 +53,11 @@ import org.osgi.service.component.annotations.Reference;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.io.BufferedWriter;
-import java.io.File;
-import java.io.FileWriter;
+import java.io.BufferedReader;
+import java.io.FileInputStream;
 import java.io.IOException;
+import java.io.InputStreamReader;
 import java.nio.ByteBuffer;
-import java.text.SimpleDateFormat;
 import java.util.*;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicReference;
@@ -110,6 +109,7 @@ public class AppComponent {
 
     private ArrayList<FlowRule> defaultFlowRulesCache = new ArrayList<>();
     private ArrayList<FlowRule> optiFlowRulesCache = new ArrayList<>();
+    private HashMap<Integer, List<AflowEntry>> flowMap = new HashMap<>();
     String topoIdxJson = "{ \"topo_idx\" : 0}";
     String rateFilePath = "";
 
@@ -366,12 +366,16 @@ public class AppComponent {
         flowStaticsCollector.start();
         logger.info("flowStatics started");*/
 
-
-      /*  dynamicDataCollector = new DynamicDataCollector(flowRuleService, TopologyDesc.getInstance(), dynamicDataCollectorHandler);
+        /*dynamicDataCollector = new DynamicDataCollector(flowRuleService, TopologyDesc.getInstance(), dynamicDataCollectorHandler);
         dynamicDataCollector.setInterval(25);
         dynamicDataCollector.start();
         logger.info("dynamic data collect");*/
 
+        //链路qos多播测试
+//        String jsonfile = readFile("/data/telemetry.flow.json");
+////        logger.info(jsonfile);
+//        handleTestData(jsonfile);
+//        installLinkTestFlow();
     }
     @Deactivate
     protected void deactivate() {
@@ -395,6 +399,54 @@ public class AppComponent {
         installFlowEntryToEndSwitch();
         initTable1();
 //        installDefaultRouting(Env.defaultRoutings);
+//        controllPica();
+    }
+
+    void controllPica() {
+        DeviceId deviceId = DeviceId.deviceId("of:4641486e73020380");
+        PortNumber output = PortNumber.portNumber(1);
+        for(int i = 2; i <=10; i++) {
+            FlowTableEntry entryTo=new FlowTableEntry();
+            entryTo.setDeviceId(deviceId)
+                    .setPriority(FlowEntryPriority.PICA)
+                    .setTable(0);
+            entryTo.filter()
+                    .setInport(i);
+            entryTo.action()
+                    .setOutput(output);
+            entryTo.install(flowRuleService);
+        }
+
+        DefaultFlowRule.Builder ruleBuilder=DefaultFlowRule.builder();
+        TrafficSelector.Builder selectorBuilder= DefaultTrafficSelector.builder();
+        selectorBuilder.matchEthType(Ethernet.TYPE_IPV4)
+                .matchInPort(PortNumber.portNumber(1));
+
+        TrafficTreatment.Builder trafficBuilder=DefaultTrafficTreatment.builder();
+        for(int i = 2; i <= 10; i++) {
+            trafficBuilder.setOutput(PortNumber.portNumber(i));
+        }
+        ruleBuilder.withSelector(selectorBuilder.build())
+                .withTreatment(trafficBuilder.build())
+                .makePermanent()
+                .withPriority(FlowEntryPriority.PICA)
+                .forTable(0)
+                .fromApp(App.appId);
+        ruleBuilder.forDevice(deviceId);
+        FlowRuleOperations.Builder flowRuleOpBuilder=FlowRuleOperations.builder();
+        FlowRule build = ruleBuilder.build();
+        flowRuleOpBuilder.add(build);
+        flowRuleService.apply(flowRuleOpBuilder.build());
+   /*     output = PortNumber.portNumber(1);
+        FlowTableEntry entryBack=new FlowTableEntry();
+        entryBack.setDeviceId(deviceId)
+                .setPriority(FlowEntryPriority.PICA)
+                .setTable(0);
+        entryBack.filter()
+                .setInport(2);
+        entryBack.action()
+                .setOutput(output);
+        entryBack.install(flowRuleService);*/
     }
 
     void testPica() {
@@ -412,7 +464,6 @@ public class AppComponent {
                 .setOutput(output);
         entry.setTimeout(App.FLOW_TIMEOUT);
         FlowRule rule = entry.install(flowRuleService);
-
     }
 
     void installFlowEntryToEndSwitch(int endSwitchId, String dstIP) {
@@ -648,7 +699,6 @@ public class AppComponent {
 //                        .setDstPort(Integer.parseInt(srcPort));
             }
 
-
             entry.action()
                     .setOutput(output);
             entry.setTimeout(App.FLOW_TIMEOUT);
@@ -768,12 +818,11 @@ public class AppComponent {
         redirectMap.put(key, value);
         redirectRootMap.put(macAddress.toString(), redirectMap);
 
-
         DeviceId deviceId = TopologyDesc.getInstance().getDeviceId(App.ACCESSID);
         FlowTableEntry entryTo = new FlowTableEntry();
         entryTo.setTable(1)
-                .setPriority(61000)
-//                .setTimeout(6)
+                .setPriority(FlowEntryPriority.REDIRECT_PACKET)
+                .setTimeout(6)
                 .setDeviceId(deviceId);
         entryTo.filter()
                 .setProtocol(IPv4.PROTOCOL_TCP)
@@ -786,8 +835,8 @@ public class AppComponent {
 
         FlowTableEntry entryBack = new FlowTableEntry();
         entryBack.setTable(1)
-                .setPriority(61000)
-//                .setTimeout(6)
+                .setPriority(FlowEntryPriority.REDIRECT_PACKET)
+                .setTimeout(6)
                 .setDeviceId(deviceId);
         entryBack.filter()
                 .setProtocol(IPv4.PROTOCOL_TCP)
@@ -795,128 +844,35 @@ public class AppComponent {
                 .setDstIP(IpPrefix.valueOf(srcIP + "/32"));
         entryBack.action()
                 .setSrcIP(dstIP)
-                .setOutput(PortNumber.portNumber(1));
+                .setOutput(PortNumber.portNumber(App.ACCESSPORT));
         entryBack.install(flowRuleService);
-
-
-       /* DefaultFlowRule.Builder ruleBuilder=DefaultFlowRule.builder();
-        TrafficSelector.Builder selectorBuilder= DefaultTrafficSelector.builder();
-        selectorBuilder.matchEthType(Ethernet.TYPE_IPV4);
-        selectorBuilder.matchIPProtocol(IPv4.PROTOCOL_TCP);
-        selectorBuilder.matchTcpSrc(TpPort.tpPort(srcPort));
-        selectorBuilder.matchIPSrc(IpPrefix.valueOf(srcIP + "/32"));
-
-        TrafficTreatment.Builder trafficBuilder=DefaultTrafficTreatment.builder();
-        trafficBuilder.setIpDst(IpAddress.valueOf(App.VUE_FRONT_IP));
-        trafficBuilder.setOutput(PortNumber.portNumber(2));
-
-        ruleBuilder.withSelector(selectorBuilder.build())
-                .withTreatment(trafficBuilder.build())
-                .makePermanent()
-                .withPriority(61000)
-                .forTable(1)
-                .fromApp(App.appId);
-        ruleBuilder.forDevice(TopologyDesc.getInstance().getDeviceId(App.ACCESSID));
-        FlowRuleOperations.Builder flowRuleOpBuilder=FlowRuleOperations.builder();
-        FlowRule build = ruleBuilder.build();
-        flowRuleOpBuilder.add(build);
-        flowRuleService.apply(flowRuleOpBuilder.build());
-
-
-        DefaultFlowRule.Builder ruleBuilder1=DefaultFlowRule.builder();
-        TrafficSelector.Builder selectorBuilder1= DefaultTrafficSelector.builder();
-        selectorBuilder1.matchEthType(Ethernet.TYPE_IPV4);
-        selectorBuilder1.matchIPProtocol(IPv4.PROTOCOL_TCP);
-        selectorBuilder1.matchTcpDst(TpPort.tpPort(srcPort));
-        selectorBuilder1.matchIPDst(IpPrefix.valueOf(srcIP + "/32"));
-
-        TrafficTreatment.Builder trafficBuilder1=DefaultTrafficTreatment.builder();
-        trafficBuilder1.setIpSrc(dstIP);
-        trafficBuilder1.setOutput(PortNumber.portNumber(1));
-
-        ruleBuilder1.withSelector(selectorBuilder1.build())
-                .withTreatment(trafficBuilder1.build())
-                .makePermanent()
-                .withPriority(61000)
-                .forTable(1)
-                .fromApp(App.appId);
-        ruleBuilder1.forDevice(TopologyDesc.getInstance().getDeviceId(App.ACCESSID));
-        FlowRuleOperations.Builder flowRuleOpBuilder1=FlowRuleOperations.builder();
-        FlowRule build1 = ruleBuilder1.build();
-        flowRuleOpBuilder1.add(build1);
-        flowRuleService.apply(flowRuleOpBuilder1.build());*/
-
     }
 
-
-
-
-    public void mendPacket(PacketContext context, Ethernet ethPkt, int srcId, PortNumber port) {
-        MacAddress macAddress = ethPkt.getSourceMAC();
-        IPv4 ipPayload = (IPv4) ethPkt.getPayload();
-        IpAddress srcIP = IpAddress.valueOf(ipPayload.getSourceAddress());
-        IpAddress dstIP = IpAddress.valueOf(ipPayload.getDestinationAddress());
-        Map<String, String> redirectMap = redirectRootMap.getOrDefault(macAddress.toString(), new ConcurrentHashMap<>());
-        TCP tcpPayload =  (TCP) ipPayload.getPayload();
-        int srcPort = tcpPayload.getSourcePort();
-        String key = srcIP + "->" + srcPort;
-        String value = dstIP.toString();
-//                        if(redirectMap.containsKey(key)) {
-//                            return;
-//                        }
-        ipPayload.setDestinationAddress(App.VUE_FRONT_IP);
-//                        logger.info(ethPkt.getDestinationMAC().toString());
-        tcpPayload.resetChecksum();
-        ipPayload.resetChecksum();
-        redirectMap.put(key, value);
-        redirectRootMap.put(macAddress.toString(), redirectMap);
-        Deque<Integer> dijkstraPath = Dijkstra(Env.graph, srcId, App.NATID);
-        natRouteToHost(new LinkedList<>(dijkstraPath), macAddress.toString(), IpPrefix.valueOf(dstIP + "/32"), FlowEntryPriority.NAT_DEFAULT_ROUTING, 2, port);
-        packetOut(context, ethPkt.serialize(),PortNumber.TABLE);
-    }
-
-    public void mendReturnPacket(PacketContext context, Ethernet ethPkt) {
-        IPv4 ipPayload = (IPv4) ethPkt.getPayload();
-        IpAddress dstIP = IpAddress.valueOf(ipPayload.getDestinationAddress());
-        Map<String, String> redirectMap = redirectRootMap.get(ethPkt.getDestinationMAC().toString());
-        assert  redirectMap != null;
-        TCP tcpPayload =  (TCP) ipPayload.getPayload();
-        int dstPort = tcpPayload.getDestinationPort();
-        String key = dstIP + "->" + dstPort;
-        if(redirectMap.containsKey(key)) {
-            logger.info("--------------------**-----------------------");
-            String newSrcIP = redirectMap.get(key);
-            ipPayload.setSourceAddress(newSrcIP);
-            tcpPayload.resetChecksum();
-            ipPayload.resetChecksum();
-            packetOut(context,  ethPkt.serialize(), PortNumber.TABLE);
-        }
-    }
 
     public void initTable1() {
-        DefaultFlowRule.Builder ruleBuilder=DefaultFlowRule.builder();
-        TrafficSelector.Builder selectorBuilder= DefaultTrafficSelector.builder();
-        selectorBuilder.matchEthType(Ethernet.TYPE_IPV4);
-
-        TrafficTreatment.Builder trafficBuilder=DefaultTrafficTreatment.builder();
-        trafficBuilder.punt();
-
-        ruleBuilder.withSelector(selectorBuilder.build())
-                .withTreatment(trafficBuilder.build())
-                .makePermanent()
-                .withPriority(5)
-                .forTable(1)
-                .fromApp(App.appId);
-        ruleBuilder.forDevice(TopologyDesc.getInstance().getDeviceId(App.ACCESSID));
-        FlowRuleOperations.Builder flowRuleOpBuilder=FlowRuleOperations.builder();
-        FlowRule build = ruleBuilder.build();
-        flowRuleOpBuilder.add(build);
-        flowRuleService.apply(flowRuleOpBuilder.build());
-
+        DeviceId deviceId = TopologyDesc.getInstance().getDeviceId(App.ACCESSID);
+        FlowTableEntry entry = new FlowTableEntry();
+        entry.setPriority(5)
+                .setTable(1)
+                .setDeviceId(deviceId);
+        entry.action()
+                .setPunt(true);
+        entry.install(flowRuleService);
     }
 
 
     public void packetToTable1(){
+        FlowTableEntry entry = new FlowTableEntry();
+        DeviceId deviceId = TopologyDesc.getInstance().getDeviceId(App.ACCESSID);
+        entry.setDeviceId(deviceId)
+                .setTable(0)
+                .setPriority(FlowEntryPriority.TO_TABLE1);
+        entry.filter()
+                .setProtocol(IPv4.PROTOCOL_TCP);
+        entry.action()
+                .setTransition(1);
+        entry.install(flowRuleService);
+     /*
         DefaultFlowRule.Builder ruleBuilder=DefaultFlowRule.builder();
         TrafficSelector.Builder selectorBuilder= DefaultTrafficSelector.builder();
         selectorBuilder.matchEthType(Ethernet.TYPE_IPV4);
@@ -928,14 +884,14 @@ public class AppComponent {
         ruleBuilder.withSelector(selectorBuilder.build())
                 .withTreatment(trafficBuilder.build())
                 .makePermanent()
-                .withPriority(62000)
+                .withPriority(FlowEntryPriority.TO_TABLE1)
                 .forTable(0)
                 .fromApp(App.appId);
         ruleBuilder.forDevice(TopologyDesc.getInstance().getDeviceId(App.ACCESSID));
         FlowRuleOperations.Builder flowRuleOpBuilder=FlowRuleOperations.builder();
         FlowRule build = ruleBuilder.build();
         flowRuleOpBuilder.add(build);
-        flowRuleService.apply(flowRuleOpBuilder.build());
+        flowRuleService.apply(flowRuleOpBuilder.build());*/
     }
 
 
@@ -976,14 +932,222 @@ public class AppComponent {
                 }
                 logger.info("default routing has been installed");
             }
-
-
         }
         catch (JsonProcessingException e) {
             e.printStackTrace();
         }
     }
 
+    private void handleTestData(String jsonData) {
+        TopologyDesc instance = TopologyDesc.getInstance();
+//        jsonData = jsonData.substring(0, jsonData.length() - 1);
+        try {
+            JsonNode jsonNode = new ObjectMapper().readTree(jsonData);
+            for(int i = 0; i < Env.N_SWITCH; i++) {
+                JsonNode deviceData = jsonNode.get(String.valueOf(i+1));
+                Iterator<String> iterator = deviceData.fieldNames();
+                List<AflowEntry> aflowEntryList = new ArrayList<>();
+                while(iterator.hasNext()) {
+                    String fieldName = iterator.next();
+                    String[] split = fieldName.split(",");
+                    String srcIP = split[0] + "/32";
+                    String swithcId = String.valueOf(i);
+                    int preId = Integer.parseInt(split[1]) - 1;
+                    String inport = "";
+                    if(preId == -1) {
+                        inport = "1";
+                    } else {
+                        DeviceId cur = instance.getDeviceId(swithcId);
+                        DeviceId pre = instance.getDeviceId(preId);
+                        inport = instance.getConnectionPort(cur, pre).toString();
+//                        inport = getPortInfo(testSwMap.get(swithcId), testSwMap.get(String.valueOf(preId))).toString();
+                    }
+
+                    JsonNode actions = deviceData.get(fieldName);
+                    JsonNode action1 = actions.get("action1");
+                    JsonNode action2 = actions.get("action2");
+                    AflowEntry aflowEntry = null;
+                    if(action1 != null && action2 != null) {
+                        String outportText = action1.get("outport").toString();
+                        outportText = outportText.substring(1, outportText.length() - 1);
+                        String[] split1 = outportText.split(",");
+                        List<String> outports = new ArrayList<>();
+                        for(String dstId : split1) {
+                            int outId = Integer.parseInt(dstId) - 1;
+                            if(outId == -1) {
+                                outports.add("1");
+                            } else {
+                                outports.add(instance.getConnectionPort(
+                                        instance.getDeviceId(swithcId), instance.getDeviceId(outId)).toString());
+//                                outports.add(getPortInfo(testSwMap.get(swithcId), testSwMap.get(String.valueOf(outId))).toString());
+                            }
+                        }
+                        String newSrcIP = action2.get("src").asText();
+                        String newDstIP = action2.get("dst").asText();
+                        String vlan = action2.get("vlan").asText();
+                        aflowEntry = new AflowEntry(srcIP, inport, outports, newSrcIP, newDstIP, vlan);
+                    } else if(action1 != null) {
+                        String outportText = action1.get("outport").toString();
+                        outportText = outportText.substring(1, outportText.length() - 1);
+                        String[] split1 = outportText.split(",");
+                        List<String> outports = new ArrayList<>();
+                        for(String dstId : split1) {
+                            int outId = Integer.parseInt(dstId) - 1;
+                            if(outId == -1) {
+                                outports.add("1");
+                            } else {
+                                outports.add(instance.getConnectionPort(
+                                        instance.getDeviceId(swithcId), instance.getDeviceId(outId)).toString());
+//                                outports.add(getPortInfo(testSwMap.get(swithcId), testSwMap.get(String.valueOf(outId))).toString());
+                            }
+                        }
+                        aflowEntry = new AflowEntry(srcIP, inport, outports, "X", "X", "-1");
+                    } else if(action2 != null) {
+                        List<String> outports = new ArrayList<>();
+                        String newSrcIP = action2.get("src").asText();
+                        String newDstIP = action2.get("dst").asText();
+                        String vlan = action2.get("vlan").asText();
+                        aflowEntry = new AflowEntry(srcIP, inport, outports, newSrcIP, newDstIP, vlan);
+                    }
+                    aflowEntryList.add(aflowEntry);
+                }
+                flowMap.put(i, aflowEntryList);
+            }
+
+        } catch (JsonProcessingException e) {
+            e.printStackTrace();
+            logger.info(e.toString());
+        }
+    }
+
+    public void installLinkTestFlow() {
+        for(int i = 0; i < Env.N_SWITCH; i++)  {
+            List<AflowEntry> aflowEntryList = flowMap.get(i);
+            if (aflowEntryList == null) {
+                return;
+            }
+            for(AflowEntry a : aflowEntryList) {
+                installMultiCastFlow(a.srcIP, a.inport, a.outports, a.newSrcIP, a.newDstIP, a.vlan, String.valueOf(i));
+            }
+        }
+    }
+
+
+    private void installMultiCastFlow(String srcIP, String inport, List<String> outports, String newSrcIP, String newDstIP, String vlan, String sId) {
+//        DeviceId deviceId = testSwMap.get(sId);
+        DeviceId deviceId = TopologyDesc.getInstance().getDeviceId(sId);
+        char c = srcIP.charAt(7);
+        //table0 的流表下发
+        if(c == '1') {
+            DefaultFlowRule.Builder ruleBuilder = DefaultFlowRule.builder();
+            TrafficSelector.Builder selectBuilder = DefaultTrafficSelector.builder();
+            selectBuilder.matchEthType(Ethernet.TYPE_IPV4)
+                    .matchInPort(PortNumber.portNumber(inport))
+                    .matchIPSrc(IpPrefix.valueOf(srcIP))
+                    .matchVlanId(VlanId.ANY);
+
+            TrafficTreatment.Builder trafficBuilder = DefaultTrafficTreatment.builder();
+            for(String output : outports) {
+                if(output.equals("0")) {
+                    logger.error("---port error--");
+                }
+                trafficBuilder.setOutput(PortNumber.portNumber(output));
+            }
+            ruleBuilder.withSelector(selectBuilder.build())
+                    .withPriority(60010)
+                    .withTreatment(trafficBuilder.build())
+                    .forTable(0)
+                    .fromApp(App.appId)
+                    .makePermanent()
+                    .forDevice(deviceId);
+            FlowRuleOperations.Builder flowRulebuilder = FlowRuleOperations.builder();
+            flowRulebuilder.add(ruleBuilder.build());
+            flowRuleService.apply(flowRulebuilder.build());
+        } else {
+
+            DefaultFlowRule.Builder ruleBuilder0 = DefaultFlowRule.builder();
+            TrafficSelector.Builder selectBuilder0 = DefaultTrafficSelector.builder();
+            selectBuilder0.matchEthType(Ethernet.TYPE_IPV4)
+                    .matchInPort(PortNumber.portNumber(inport))
+                    .matchIPSrc(IpPrefix.valueOf(srcIP));
+
+            TrafficTreatment.Builder trafficBuilder0 = DefaultTrafficTreatment.builder();
+            for(String output : outports) {
+                if(output.equals("0")) {
+                    logger.error("---port error--");
+                }
+                trafficBuilder0.setOutput(PortNumber.portNumber(output));
+            }
+            if(!newSrcIP.equals("X")) {
+                trafficBuilder0.transition(3);
+                //处理返回包的流表项
+                handleReturnPacket(srcIP, inport, newSrcIP, newDstIP, vlan, deviceId);
+            }
+            ruleBuilder0.withSelector(selectBuilder0.build())
+                    .withPriority(60009)
+                    .withTreatment(trafficBuilder0.build())
+                    .forTable(0)
+                    .fromApp(App.appId)
+                    .makePermanent()
+                    .forDevice(deviceId);
+            FlowRuleOperations.Builder flowRulebuilder0 = FlowRuleOperations.builder();
+            flowRulebuilder0.add(ruleBuilder0.build());
+            flowRuleService.apply(flowRulebuilder0.build());
+        }
+
+    }
+
+    private void handleReturnPacket(String srcIP, String inport, String newSrcIP, String newDstIP, String vlan,  DeviceId deviceId) {
+        DefaultFlowRule.Builder ruleBuilder = DefaultFlowRule.builder();
+        TrafficSelector.Builder selectBuilder = DefaultTrafficSelector.builder();
+        selectBuilder.matchEthType(Ethernet.TYPE_IPV4)
+                .matchIPSrc(IpPrefix.valueOf(srcIP))
+                .matchInPort(PortNumber.portNumber(inport))
+                .matchVlanId(VlanId.ANY);
+
+        TrafficTreatment.Builder trafficBuilder = DefaultTrafficTreatment.builder();
+        trafficBuilder.setIpSrc(IpAddress.valueOf(newSrcIP))
+                .setIpDst(IpAddress.valueOf(newDstIP))
+                .setVlanId(VlanId.vlanId(Short.parseShort(vlan)))
+                .setOutput(PortNumber.IN_PORT);
+
+        ruleBuilder.withSelector(selectBuilder.build())
+                .withPriority(60009)
+                .withTreatment(trafficBuilder.build())
+                .forTable(3)
+                .fromApp(App.appId)
+                .makePermanent()
+                .forDevice(deviceId);
+        FlowRuleOperations.Builder flowRulebuilder = FlowRuleOperations.builder();
+        flowRulebuilder.add(ruleBuilder.build());
+        flowRuleService.apply(flowRulebuilder.build());
+    }
+
+    public String readFile(String path) {
+        BufferedReader reader = null;
+        String laststr = "";
+        try {
+            FileInputStream fileInputStream = new FileInputStream(path);
+            InputStreamReader inputStreamReader = new InputStreamReader(fileInputStream, "UTF-8");
+            reader = new BufferedReader(inputStreamReader);
+            String tempString = null;
+            while ((tempString = reader.readLine()) != null) {
+                laststr += tempString;
+            }
+            reader.close();
+        } catch (IOException e) {
+            e.printStackTrace();
+        } finally {
+            if (reader != null) {
+                try {
+                    reader.close();
+                } catch (IOException e) {
+                    e.printStackTrace();
+                }
+            }
+        }
+        return laststr;
+    }
 
     /**
      * Request packet in via packet service.
@@ -998,7 +1162,6 @@ public class AppComponent {
      * Packet processor responsible for forwarding packets along their paths.
      */
     private class ReactivePacketProcessor implements PacketProcessor {
-
         @Override
         public void process(PacketContext context) {
             // Stop processing if the packet has been handled, since we
@@ -1008,7 +1171,6 @@ public class AppComponent {
             }
 
             InboundPacket pkt = context.inPacket();
-
             Ethernet ethPkt = pkt.parsed();
 
             if (ethPkt == null) {
@@ -1053,7 +1215,6 @@ public class AppComponent {
                     return;
                 }
             }
-
             //packetin 消息接入的交换机
             PortNumber port = pkt.receivedFrom().port();
             DeviceId deviceId = pkt.receivedFrom().deviceId();
@@ -1070,7 +1231,6 @@ public class AppComponent {
 
                 //如果用户没有登陆,将修改ip包,强制跳转到登陆页面
                 if(!isLoginMac.contains(macAddress)) {
-
                     //第一次packetIn会默认配置到网关的路由
                     if(!macAddrSet.contains(macAddress) && srcId == App.ACCESSID) {
                         logger.info("first in mac addr:" + macAddress + "   connected switcher:" + srcId);
@@ -1084,24 +1244,14 @@ public class AppComponent {
                         hostRouteToNat(new LinkedList<>(dijkstraPath), IpPrefix.valueOf(App.VUE_FRONT_IP + "/32"), FlowEntryPriority.NAT_DEFAULT_ROUTING, 1, null);
                         natRouteToHost(new LinkedList<>(dijkstraPath), macAddress.toString(), IpPrefix.valueOf(App.VUE_FRONT_IP + "/32"), FlowEntryPriority.NAT_DEFAULT_ROUTING - 5, 1, port);
                         macAddrSet.add(macAddress);
-//                        try {
-//                            TimeUnit.SECONDS.sleep(2);
-//                        } catch (InterruptedException e) {
-//                            e.printStackTrace();
-//                        }
                     }
-
                     //修改包强转到认证页面
                     if(protocol == IPv4.PROTOCOL_TCP  && srcId == App.ACCESSID) {
-//                        mendPacket(context, ethPkt, srcId, port);
                         mendPacket(ethPkt);
                     }
                     return;
                 } else {
                     //用户登陆后的处理
-                    if(protocol == IPv4.PROTOCOL_TCP && srcId == App.NATID) {
-//                        mendReturnPacket(context, ethPkt);
-                    }
                     if(srcId == App.ACCESSID) {
                         if (protocol == IPv4.PROTOCOL_ICMP) {
                             logger.info("icmp  ping");
@@ -1117,10 +1267,9 @@ public class AppComponent {
                         String key  = macAddress.toString() + "-" + dstIP.toString();
                         if (noRightMacToIPs.contains(key)) {
                             //如果用户没有信任度访问IP，则将其强制转换到一个页面提示
-                            mendPacket(context, ethPkt, srcId, port);
+                            mendPacket(ethPkt);
                             return;
                         }
-
                         String param = "srcMac=" + macAddress.toString() + "&srcIP=" + srcIP + "&dstIP=" +
                                 dstIP.toString() + "&switcher=" + srcId + "&srcPort=" + srcPort +
                                 "&dstPort=" + dstPort + "&protocol=" + protocol;
@@ -1156,6 +1305,38 @@ public class AppComponent {
                 }
             }
             isRunning.set(false);
+        }
+    }
+
+    /**
+     * 每一条流表项的类.
+     */
+    public class AflowEntry {
+        String srcIP;
+        String inport;
+        List<String> outports;
+        String newSrcIP;
+        String newDstIP;
+        String vlan;
+        public AflowEntry(String srcIP, String inport, List<String> outports, String newSrcIP, String newDstIp, String vlan) {
+            this.srcIP = srcIP;
+            this.inport = inport;
+            this.outports = outports;
+            this.newSrcIP = newSrcIP;
+            this.newDstIP = newDstIp;
+            this.vlan = vlan;
+        }
+
+        @Override
+        public String toString() {
+            return "AflowEntry{" +
+                    "srcIP='" + srcIP + '\'' +
+                    ", inport='" + inport + '\'' +
+                    ", outports=" + outports +
+                    ", newSrcIP='" + newSrcIP + '\'' +
+                    ", newDstIP='" + newDstIP + '\'' +
+                    ", vlan=" + vlan +
+                    '}';
         }
     }
 }

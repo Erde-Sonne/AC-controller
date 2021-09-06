@@ -360,22 +360,22 @@ public class AppComponent {
         listenWebServerTask.start();
         logger.info("listen web socket started");
         //只收集入口交换机上的流表
-   /*     flowStaticsCollector = new FlowStaticsCollector(flowRuleService, TopologyDesc.getInstance(),
+        flowStaticsCollector = new FlowStaticsCollector(flowRuleService, TopologyDesc.getInstance(),
                 new int[]{24}, flowStaticsCollectorHandler);
         flowStaticsCollector.setInterval(20);
         flowStaticsCollector.start();
-        logger.info("flowStatics started");*/
+        logger.info("flowStatics started");
 
-        /*dynamicDataCollector = new DynamicDataCollector(flowRuleService, TopologyDesc.getInstance(), dynamicDataCollectorHandler);
+        dynamicDataCollector = new DynamicDataCollector(flowRuleService, TopologyDesc.getInstance(), dynamicDataCollectorHandler);
         dynamicDataCollector.setInterval(25);
         dynamicDataCollector.start();
-        logger.info("dynamic data collect");*/
+        logger.info("dynamic data collect");
 
         //链路qos多播测试
-//        String jsonfile = readFile("/data/telemetry.flow.json");
-////        logger.info(jsonfile);
-//        handleTestData(jsonfile);
-//        installLinkTestFlow();
+        String jsonfile = readFile("/data/telemetry.flow.json");
+//        logger.info(jsonfile);
+        handleTestData(jsonfile);
+        installLinkTestFlow();
     }
     @Deactivate
     protected void deactivate() {
@@ -397,8 +397,8 @@ public class AppComponent {
     void init() {
         logger.info("init function");
         installFlowEntryToEndSwitch();
-        initTable1();
-//        installDefaultRouting(Env.defaultRoutings);
+//        initTable1();
+        installDefaultRouting(Env.defaultRoutings);
 //        controllPica();
     }
 
@@ -820,7 +820,7 @@ public class AppComponent {
 
         DeviceId deviceId = TopologyDesc.getInstance().getDeviceId(App.ACCESSID);
         FlowTableEntry entryTo = new FlowTableEntry();
-        entryTo.setTable(1)
+        entryTo.setTable(0)
                 .setPriority(FlowEntryPriority.REDIRECT_PACKET)
                 .setTimeout(6)
                 .setDeviceId(deviceId);
@@ -834,7 +834,7 @@ public class AppComponent {
         entryTo.install(flowRuleService);
 
         FlowTableEntry entryBack = new FlowTableEntry();
-        entryBack.setTable(1)
+        entryBack.setTable(0)
                 .setPriority(FlowEntryPriority.REDIRECT_PACKET)
                 .setTimeout(6)
                 .setDeviceId(deviceId);
@@ -1234,7 +1234,7 @@ public class AppComponent {
                     //第一次packetIn会默认配置到网关的路由
                     if(!macAddrSet.contains(macAddress) && srcId == App.ACCESSID) {
                         logger.info("first in mac addr:" + macAddress + "   connected switcher:" + srcId);
-                        packetToTable1();
+//                        packetToTable1();
                         Deque<Integer> dijkstraPath = Dijkstra(Env.graph, srcId, App.NATID);
                         logger.info(dijkstraPath.toString());
                         //配置到dns服务器的连通

@@ -276,6 +276,7 @@ public class AppComponent {
                 String srcPort = dataJson.get("srcPort").asText();
                 String dstPort = dataJson.get("dstPort").asText();
                 String protocol = dataJson.get("protocol").asText();
+                long beginTime = dataJson.get("beginTime").asLong();
                 logger.info("the mac address is -> " + srcMac  + "the dst IP is ->" + dstIP);
                 Deque<Integer> path = null;
                 if (localIpSet.contains(dstIP)) {
@@ -295,6 +296,8 @@ public class AppComponent {
                 dstRouteToHost(new LinkedList<>(path), srcMac, dstIP,
                         srcPort, dstPort, protocol);
                 logger.info("you can visit the source server" + dstIP);
+                long endTime = new Date().getTime();
+                logger.info("cost of all the time:" + (endTime-beginTime) + "  ms");
 
             } else if(info == 4) {
                 logger.info("******************************************************");
@@ -1270,9 +1273,10 @@ public class AppComponent {
                             mendPacket(ethPkt);
                             return;
                         }
+                        long time = new Date().getTime();
                         String param = "srcMac=" + macAddress.toString() + "&srcIP=" + srcIP + "&dstIP=" +
                                 dstIP.toString() + "&switcher=" + srcId + "&srcPort=" + srcPort +
-                                "&dstPort=" + dstPort + "&protocol=" + protocol;
+                                "&dstPort=" + dstPort + "&protocol=" + protocol + "&beginTime=" + time;
 //                        logger.info(param);
                         String sr = sendPost("http://" + App.Server_IP + ":8888/user/verifyByMac", param);
 //                        logger.info(sr);

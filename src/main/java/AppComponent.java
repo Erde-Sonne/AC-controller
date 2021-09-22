@@ -22,6 +22,7 @@ import apps.smartfwd.src.main.java.models.SwitchPair;
 import apps.smartfwd.src.main.java.task.*;
 import apps.smartfwd.src.main.java.task.base.AbstractStoppableTask;
 import apps.smartfwd.src.main.java.utils.Simulation;
+import com.eclipsesource.json.JsonObject;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -277,28 +278,32 @@ public class AppComponent {
                 String dstPort = dataJson.get("dstPort").asText();
                 String protocol = dataJson.get("protocol").asText();
                 long beginTime = dataJson.get("beginTime").asLong();
+                int safeRoute = dataJson.get("safeRoute").asInt();
                 logger.info("the mac address is -> " + srcMac  + "the dst IP is ->" + dstIP);
-                Deque<Integer> path = null;
                 if (localIpSet.contains(dstIP)) {
                     String[] split = dstIP.split("10.0.0.");
                     logger.info("dst source id is: " + split[1]);
                     //安装到host的流表
                     installFlowEntryToEndSwitch(Integer.parseInt(split[1]) - 1, dstIP);
                     //计算出到资源服务器的路径
-                    path = Dijkstra(Env.graph, Integer.parseInt(switcher), Integer.parseInt(split[1]) - 1);
+                    if (safeRoute == 0) {
+                        useCommonRoute(Integer.parseInt(switcher), Integer.parseInt(split[1]) - 1,
+                                srcMac, dstIP, srcPort, dstPort, protocol, beginTime);
+                    } else {
+                        //采用安全路由
+                        useSafeRoute(Integer.parseInt(switcher), Integer.parseInt(split[1]) - 1,
+                                srcMac, dstIP, srcPort,dstPort, protocol, beginTime);
+                    }
                 } else {
-                    path = Dijkstra(Env.graph, Integer.parseInt(switcher), 0);
+                    if (safeRoute == 0) {
+                        useCommonRoute(Integer.parseInt(switcher), 0,
+                                srcMac, dstIP, srcPort, dstPort, protocol, beginTime);
+                    } else {
+                        //采用安全路由
+                        useSafeRoute(Integer.parseInt(switcher), 0,
+                                srcMac, dstIP, srcPort,dstPort, protocol, beginTime);
+                    }
                 }
-
-                logger.info(path.toString());
-                hostRouteToDst(new LinkedList<>(path), srcMac, dstIP,
-                        srcPort, dstPort, protocol);
-                dstRouteToHost(new LinkedList<>(path), srcMac, dstIP,
-                        srcPort, dstPort, protocol);
-                logger.info("you can visit the source server" + dstIP);
-                long endTime = new Date().getTime();
-                logger.info("cost of all the time:" + (endTime-beginTime) + "  ms");
-
             } else if(info == 4) {
                 logger.info("******************************************************");
                 String msg = dataJson.get("msg").asText();
@@ -392,7 +397,6 @@ public class AppComponent {
         processor = null;
         logger.info("--------------------System Stopped-------------------------");
     }
-
 
     /**
      * 初始化系统启动所需的相关方法.
@@ -1150,6 +1154,70 @@ public class AppComponent {
             }
         }
         return laststr;
+    }
+
+    /**
+     * 采用普通路由
+     * @param src
+     * @param dst
+     * @param srcMac
+     * @param dstIP
+     * @param srcPort
+     * @param dstPort
+     * @param protocol
+     */
+    private void useCommonRoute(int src, int dst, String srcMac, String dstIP,
+                                String srcPort, String dstPort, String protocol, long beginTime) {
+        Deque<Integer> path = Dijkstra(Env.graph, src, dst);
+        logger.info("common routing is " + path.toString());
+        hostRouteToDst(new LinkedList<>(path), srcMac, dstIP,
+                srcPort, dstPort, protocol);
+        dstRouteToHost(new LinkedList<>(path), srcMac, dstIP,
+                srcPort, dstPort, protocol);
+        logger.info("you can visit the source server" + dstIP);
+        long endTime = new Date().getTime();
+        logger.info("cost of all the time:" + (endTime-beginTime) + "  ms");
+    }
+
+    /**
+     * 请求安全路由
+     * @param src
+     * @param dst
+     * @param srcMac
+     * @param dstIP
+     * @param srcPort
+     * @param dstPort
+     * @param protocol
+     */
+    private void useSafeRoute(int src, int dst, String srcMac, String dstIP,
+                              String srcPort, String dstPort, String protocol, long beginTime) {
+        JsonObject jsonObject = new JsonObject();
+        jsonObject.set("src", src);
+        jsonObject.set("dst", dst);
+        String req = jsonObject.toString();
+        SocketClientTask.ResponseHandler responseHandler = pyload -> {
+            logger.info(pyload);
+            try {
+                JsonNode jsonNode = new ObjectMapper().readTree(pyload);
+                JsonNode pathArray = jsonNode.get("routing");
+                Deque<Integer> path = new LinkedList<>();
+                for(int i = 0; i < pathArray.size(); i++) {
+                    path.add(pathArray.get(i).asInt());
+                }
+                logger.info("safe routing is " + path.toString());
+                hostRouteToDst(new LinkedList<>(path), srcMac, dstIP,
+                        srcPort, dstPort, protocol);
+                dstRouteToHost(new LinkedList<>(path), srcMac, dstIP,
+                        srcPort, dstPort, protocol);
+                logger.info("you can visit the source server" + dstIP);
+                long endTime = new Date().getTime();
+                logger.info("cost of all the time:" + (endTime-beginTime) + "  ms");
+            } catch (JsonProcessingException e) {
+                e.printStackTrace();
+            }
+        };
+        new SocketClientTask(req, responseHandler,
+                App.SAFE_ROUTING_IP, App.SAFE_ROUTING_PORT).start();
     }
 
     /**

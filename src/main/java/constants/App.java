@@ -39,4 +39,7 @@ public class App {
 
     public static final int NATPORT = 2;
     public static final int ACCESSPORT = 1;
+
+    public static final String SAFE_ROUTING_IP = "192.168.1.49";
+    public static final int SAFE_ROUTING_PORT = 1065;
 }

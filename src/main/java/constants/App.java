@@ -33,6 +33,7 @@ public class App {
     public static final String VUE_FRONT_IP = "192.168.1.49";
 
     public static final int FLOW_TIMEOUT = 30;
+    public static final int DEFAULT_FLOW_TIMEOUT = 60;
 
     public static final int NATID = 0;
     public static final int ACCESSID = 24;

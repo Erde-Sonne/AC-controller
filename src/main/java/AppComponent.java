@@ -405,7 +405,7 @@ public class AppComponent {
         logger.info("init function");
         installFlowEntryToEndSwitch();
 //        initTable1();
-        installDefaultRouting(Env.defaultRoutings);
+//        installDefaultRouting(Env.defaultRoutings);
 //        controllPica();
     }
 
@@ -617,6 +617,43 @@ public class AppComponent {
         };
         SocketClientTask task=new SocketClientTask(req, responseHandler,App.Server_IP,App.Server_PORT);
         task.start();
+    }
+
+    public void flowFWD(Deque<Integer> path, String srcIP, String dstIP) {
+        TopologyDesc topo = TopologyDesc.getInstance();
+        List<Integer> routing = new ArrayList<>();
+        int size = path.size();
+        for(int i = 0; i < size; i++) {
+            routing.add(path.pollFirst());
+        }
+//        Integer dst = routing.get(size - 1);
+        for(int j=0;j<routing.size();j++){
+            int curr=routing.get(j);
+            DeviceId currDeviceId=topo.getDeviceId(curr);
+            PortNumber output = PortNumber.portNumber(App.NATPORT);
+            if(j < routing.size() - 1) {
+                int next=routing.get(j+1);
+                DeviceId nextHopDeviceId=topo.getDeviceId(next);
+                output = topo.getConnectionPort(currDeviceId,nextHopDeviceId);
+            }
+            if(output.equals(INVALID_PORT)){
+                logger.info("the adjacent switch port error");
+                continue;
+                //todo log
+            }
+            FlowTableEntry entry=new FlowTableEntry();
+            entry.setDeviceId(currDeviceId)
+                    .setPriority(FlowEntryPriority.DEFAULT_ROUTING_FWD)
+                    .setTable(0);
+
+            entry.filter()
+                    .setSrcIP(IpPrefix.valueOf(srcIP + "/32"))
+                    .setDstIP(IpPrefix.valueOf(dstIP + "/32"));
+            entry.action()
+                    .setOutput(output);
+            entry.setTimeout(App.DEFAULT_FLOW_TIMEOUT);
+            entry.install(flowRuleService);
+        }
     }
 
     public void hostRouteToDst(Deque<Integer> path, String srcMac, String dstIP,
@@ -1157,6 +1194,18 @@ public class AppComponent {
     }
 
     /**
+     * 响应式的下发普通路由,(源端口、源IP、目的端口、目的IP)
+     * @param srcIP
+     * @param dstIP
+     */
+    private void defaultRouteFWD(int srcId, String srcIP, String dstIP) {
+        String[] split = dstIP.split("10.0.0.");
+        int dst = Integer.parseInt(split[1]) - 1;
+        Deque<Integer> path = Dijkstra(Env.graph, srcId, dst);
+        flowFWD(new LinkedList<>(path), srcIP, dstIP);
+    }
+
+    /**
      * 采用普通路由
      * @param src
      * @param dst
@@ -1176,7 +1225,9 @@ public class AppComponent {
                 srcPort, dstPort, protocol);
         logger.info("you can visit the source server" + dstIP);
         long endTime = new Date().getTime();
-        logger.info("cost of all the time:" + (endTime-beginTime) + "  ms");
+        long costTime = endTime-beginTime;
+        logger.info("cost of all the time:" + costTime + "  ms");
+        sendPathToWeb(srcMac, path.toString(), "0", String.valueOf(costTime));
     }
 
     /**
@@ -1211,13 +1262,24 @@ public class AppComponent {
                         srcPort, dstPort, protocol);
                 logger.info("you can visit the source server" + dstIP);
                 long endTime = new Date().getTime();
-                logger.info("cost of all the time:" + (endTime-beginTime) + "  ms");
+                long costTime = endTime-beginTime;
+                logger.info("cost of all the time:" + costTime + "  ms");
+                sendPathToWeb(srcMac, path.toString(), "1", String.valueOf(costTime));
             } catch (JsonProcessingException e) {
                 e.printStackTrace();
             }
         };
         new SocketClientTask(req, responseHandler,
                 App.SAFE_ROUTING_IP, App.SAFE_ROUTING_PORT).start();
+    }
+
+    /**
+     * 发送计算出的路径到服务器
+     */
+    private void sendPathToWeb(String macAddress, String path, String safeRoute, String costTime) {
+        String param = "macAddress=" + macAddress + "&path=" + path + "&safeRoute=" +
+                safeRoute + "&costTime=" + costTime;
+        String sr = sendPost("http://" + App.Server_IP + ":8888/data/path", param);
     }
 
     /**
@@ -1353,9 +1415,17 @@ public class AppComponent {
                 }
 
             }
-            logger.info(ethPkt.toString());
-            //packet in 的包不是IP包
-            logger.info("other  packet in message");
+            else if(ipPayload != null) {
+                logger.info("this is my fwd, oh yes------------------");
+                logger.info(ethPkt.toString());
+                IpAddress srcIP = IpAddress.valueOf(ipPayload.getSourceAddress());
+                IpAddress dstIP = IpAddress.valueOf(ipPayload.getDestinationAddress());
+                defaultRouteFWD(srcId, srcIP.toString(), dstIP.toString());
+            } else {
+                logger.info(ethPkt.toString());
+                //packet in 的包不是IP包
+                logger.info("other  packet in message");
+            }
         }
 
     }

@@ -21,6 +21,7 @@ public class FlowEntryPriority {
     //table2 drop
     public static final int TABLE2_DROP=40000;
 
+    public static final int DEFAULT_ROUTING_FWD=55000;
     public static final int RESOURCE_DEFAULT_ROUTING=55000;
     public static final int NAT_DEFAULT_ROUTING=50000;
     public static final int DNS_DEFAULT_ROUTING=60000;

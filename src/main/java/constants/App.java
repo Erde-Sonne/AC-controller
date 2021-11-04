@@ -25,12 +25,12 @@ public class App {
     public static final String WEB_LISTENING_IP = "0.0.0.0";
     public static final int WEB_LISTENING_PORT = 1060;
 
-    public static final String Server_IP = "192.168.1.49";
+    public static final String Server_IP = "192.168.1.57";
     public static final int Server_PORT = 1061;
 
     public static final String DNS_IP = "114.114.114.114";
 
-    public static final String VUE_FRONT_IP = "192.168.1.49";
+    public static final String VUE_FRONT_IP = "192.168.1.57";
 
     public static final int FLOW_TIMEOUT = 30;
     public static final int DEFAULT_FLOW_TIMEOUT = 60;

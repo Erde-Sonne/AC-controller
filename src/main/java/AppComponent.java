@@ -138,7 +138,7 @@ public class AppComponent {
     FlowStaticsCollector.Handler flowStaticsCollectorHandler = new FlowStaticsCollector.Handler() {
         @Override
         public void handle(Map<String,List<Map<String, String>>> stats) {
-            flowStatics.set(stats);
+//            flowStatics.set(stats);
 //            logger.info(stats.toString());
             ObjectMapper mapper = new ObjectMapper();
             try {
@@ -344,7 +344,6 @@ public class AppComponent {
 
     @Activate
     protected void activate() {
-
         logger.info("Activate started-------------");
         App.appId = coreService.registerApplication("org.chandler.smartfwd");
         Env.N_SWITCH=deviceService.getAvailableDeviceCount();
@@ -370,12 +369,12 @@ public class AppComponent {
         //只收集入口交换机上的流表
         flowStaticsCollector = new FlowStaticsCollector(flowRuleService, TopologyDesc.getInstance(),
                 new int[]{24}, flowStaticsCollectorHandler);
-        flowStaticsCollector.setInterval(20);
+        flowStaticsCollector.setInterval(10);
         flowStaticsCollector.start();
         logger.info("flowStatics started");
 
         dynamicDataCollector = new DynamicDataCollector(flowRuleService, TopologyDesc.getInstance(), dynamicDataCollectorHandler);
-        dynamicDataCollector.setInterval(25);
+        dynamicDataCollector.setInterval(8);
         dynamicDataCollector.start();
         logger.info("dynamic data collect");
 

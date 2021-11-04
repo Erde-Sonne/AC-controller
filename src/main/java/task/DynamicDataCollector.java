@@ -44,7 +44,8 @@ public class DynamicDataCollector extends PeriodicalTask {
                 Map<String, long[]> tmp = new HashMap<>();
                 for(FlowEntry entry:flowRuleService.getFlowEntries(deviceId)){
                     if(!entry.table().equals(IndexTableId.of(0))) continue;
-                    if(entry.priority()!= FlowEntryPriority.RESOURCE_DEFAULT_ROUTING) continue;
+                    if(entry.priority()!= FlowEntryPriority.RESOURCE_DEFAULT_ROUTING
+                            && entry.priority()!= FlowEntryPriority.DEFAULT_ROUTING_FWD) continue;
 
                     TrafficSelector selector=entry.selector();
                     IPCriterion dstCriterion=(IPCriterion) selector.getCriterion(Criterion.Type.IPV4_DST);

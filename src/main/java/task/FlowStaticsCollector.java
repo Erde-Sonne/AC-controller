@@ -50,7 +50,6 @@ public class FlowStaticsCollector extends PeriodicalTask {
                 for(FlowEntry entry:flowRuleService.getFlowEntries(topo.getDeviceId(srcId))){
                     if(!entry.table().equals(IndexTableId.of(0))) continue;
                     if(entry.priority()!= FlowEntryPriority.RESOURCE_DEFAULT_ROUTING) continue;
-
                     TrafficSelector selector=entry.selector();
                     IPCriterion dstCriterion=(IPCriterion) selector.getCriterion(Criterion.Type.IPV4_DST);
                     IPCriterion srcCriterion=(IPCriterion) selector.getCriterion(Criterion.Type.IPV4_SRC);

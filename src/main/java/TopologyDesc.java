@@ -64,6 +64,8 @@ public class TopologyDesc {
         hosts.forEach(host -> logger.debug(host.toString()));
 
         deviceService.getAvailableDevices().forEach(d-> deviceIds.add(d.id()));
+        //移除物理交换机的deviceID
+        deviceIds.remove(DeviceId.deviceId("of:4641486e73020380"));
         for (int i = 0; i < N_SWITCH; i++) {
             String rawStr = base16(i + 1);
             int zeroLen = 16 - rawStr.length();

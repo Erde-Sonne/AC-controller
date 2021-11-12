@@ -105,6 +105,7 @@ public class DynamicDataCollector extends PeriodicalTask {
                 //将curr更新到pre
                 pre.clear();
                 pre.putAll(curr);
+                preStats.put(device, pre);
             }
             handler.handle(res);
         };

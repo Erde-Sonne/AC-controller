@@ -346,8 +346,8 @@ public class AppComponent {
     protected void activate() {
         logger.info("Activate started-------------");
         App.appId = coreService.registerApplication("org.chandler.smartfwd");
-        Env.N_SWITCH=deviceService.getAvailableDeviceCount();
-
+//        Env.N_SWITCH=deviceService.getAvailableDeviceCount();
+        Env.N_SWITCH=25;
         logger.info("Populate cache");
         TopologyDesc.getInstance(deviceService,hostService,topologyService);
         logger.info("Populate done");
@@ -405,7 +405,7 @@ public class AppComponent {
         installFlowEntryToEndSwitch();
 //        initTable1();
 //        installDefaultRouting(Env.defaultRoutings);
-//        controllPica();
+        controllPica();
     }
 
     void controllPica() {
@@ -618,7 +618,7 @@ public class AppComponent {
         task.start();
     }
 
-    public void flowFWD(Deque<Integer> path, String srcIP, String dstIP) {
+    public void flowFWD(Deque<Integer> path, String srcIP, String dstIP, short vlanId) {
         TopologyDesc topo = TopologyDesc.getInstance();
         List<Integer> routing = new ArrayList<>();
         int size = path.size();
@@ -642,12 +642,18 @@ public class AppComponent {
             }
             FlowTableEntry entry=new FlowTableEntry();
             entry.setDeviceId(currDeviceId)
-                    .setPriority(FlowEntryPriority.DEFAULT_ROUTING_FWD)
                     .setTable(0);
 
             entry.filter()
                     .setSrcIP(IpPrefix.valueOf(srcIP + "/32"))
                     .setDstIP(IpPrefix.valueOf(dstIP + "/32"));
+            if (vlanId == 0) {
+                entry.filter()
+                        .setVlanId(0);
+                entry.setPriority(FlowEntryPriority.DEFAULT_ROUTING_VLAN);
+            } else {
+                entry.setPriority(FlowEntryPriority.DEFAULT_ROUTING_FWD);
+            }
             entry.action()
                     .setOutput(output);
             entry.setTimeout(App.DEFAULT_FLOW_TIMEOUT);
@@ -1197,11 +1203,11 @@ public class AppComponent {
      * @param srcIP
      * @param dstIP
      */
-    private void defaultRouteFWD(int srcId, String srcIP, String dstIP) {
+    private void defaultRouteFWD(int srcId, String srcIP, String dstIP, short vlanId) {
         String[] split = dstIP.split("10.0.0.");
         int dst = Integer.parseInt(split[1]) - 1;
         Deque<Integer> path = Dijkstra(Env.graph, srcId, dst);
-        flowFWD(new LinkedList<>(path), srcIP, dstIP);
+        flowFWD(new LinkedList<>(path), srcIP, dstIP, vlanId);
     }
 
     /**
@@ -1417,9 +1423,11 @@ public class AppComponent {
             else if(ipPayload != null) {
                 logger.info("this is my fwd, oh yes------------------");
                 logger.info(ethPkt.toString());
+                short vlanID = 1;
+//                logger.info("abc-vlan:" + String.valueOf(vlanID));
                 IpAddress srcIP = IpAddress.valueOf(ipPayload.getSourceAddress());
                 IpAddress dstIP = IpAddress.valueOf(ipPayload.getDestinationAddress());
-                defaultRouteFWD(srcId, srcIP.toString(), dstIP.toString());
+                defaultRouteFWD(srcId, srcIP.toString(), dstIP.toString(), vlanID);
             } else {
                 logger.info(ethPkt.toString());
                 //packet in 的包不是IP包
